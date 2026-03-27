@@ -18,14 +18,14 @@
     "prepublishOnly": "pnpm run build"
   },
   "peerDependencies": {
-    "@openacp/plugin-sdk": "^1.0.0"
+    "@openacp/plugin-sdk": ">=2026.0.0"
   },
   "dependencies": {
     "discord.js": "^14.25.1",
     "nanoid": "^5.1.7"
   },
   "devDependencies": {
-    "@openacp/plugin-sdk": "^1.0.0",
+    "@openacp/plugin-sdk": ">=2026.0.0",
     "typescript": "^5.4.0",
     "vitest": "^3.0.0"
   },
