@@ -18,18 +18,21 @@
     "prepublishOnly": "npm run build"
   },
   "peerDependencies": {
-    "@openacp/plugin-sdk": ">=2026.0326.0"
+    "@openacp/plugin-sdk": ">=1.0.0"
   },
   "dependencies": {
-    "discord.js": "^14.25.1"
+    "discord.js": "^14.25.1",
+    "nanoid": "^5.1.7"
   },
   "devDependencies": {
-    "@openacp/plugin-sdk": ">=2026.0326.0",
-    "@openacp/cli": ">=2026.0326.0",
+    "@openacp/cli": "file:../OpenACP",
+    "@openacp/plugin-sdk": "file:../OpenACP/packages/plugin-sdk",
     "typescript": "^5.4.0",
     "vitest": "^3.0.0"
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
