@@ -1,0 +1,40 @@
+{
+  "name": "@openacp/adapter-discord",
+  "version": "0.1.0",
+  "description": "Discord adapter plugin for OpenACP — forum threads, slash commands, streaming messages",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "prepublishOnly": "pnpm run build"
+  },
+  "peerDependencies": {
+    "@openacp/plugin-sdk": "^1.0.0"
+  },
+  "dependencies": {
+    "discord.js": "^14.25.1",
+    "nanoid": "^5.1.7"
+  },
+  "devDependencies": {
+    "@openacp/plugin-sdk": "^1.0.0",
+    "typescript": "^5.4.0",
+    "vitest": "^3.0.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Open-ACP/discord-adapter.git"
+  }
+}
