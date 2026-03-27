@@ -11,7 +11,7 @@ import {
   formatToolSummary,
   formatToolTitle,
   resolveToolIcon,
-} from "@openacp/plugin-sdk";
+} from "@openacp/plugin-sdk/formatting";
 
 function formatViewerLinks(links?: ViewerLinks, filePath?: string): string {
   if (!links) return "";

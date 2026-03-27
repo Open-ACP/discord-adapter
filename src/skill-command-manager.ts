@@ -1,5 +1,6 @@
 import type { Message, TextChannel, ThreadChannel } from 'discord.js'
-import type { AgentCommand, DiscordPlatformData, SendQueue } from '@openacp/plugin-sdk'
+import type { AgentCommand, SendQueue } from '@openacp/plugin-sdk'
+import type { DiscordPlatformData } from './types.js'
 import { log } from '@openacp/plugin-sdk'
 import type { SessionManager } from '@openacp/plugin-sdk'
 

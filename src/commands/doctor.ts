@@ -4,8 +4,9 @@ import {
   ButtonStyle,
 } from 'discord.js'
 import type { ChatInputCommandInteraction, ButtonInteraction } from 'discord.js'
-import type { DoctorReport, PendingFix } from '@openacp/plugin-sdk'
-import { log, DoctorEngine } from '@openacp/plugin-sdk'
+import type { DoctorReport, PendingFix } from '@openacp/plugin-sdk/config'
+import { DoctorEngine } from '@openacp/plugin-sdk/config'
+import { log } from '@openacp/plugin-sdk'
 import type { DiscordAdapter } from '../adapter.js'
 
 // In-memory store of pending fixes keyed by "guildId:channelId:messageId"

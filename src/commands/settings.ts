@@ -4,8 +4,9 @@ import {
   ButtonStyle,
 } from 'discord.js'
 import type { ChatInputCommandInteraction, ButtonInteraction } from 'discord.js'
-import type { ConfigFieldDef } from '@openacp/plugin-sdk'
-import { log, getSafeFields, resolveOptions, getConfigValue, isHotReloadable } from '@openacp/plugin-sdk'
+import type { ConfigFieldDef } from '@openacp/plugin-sdk/config'
+import { getSafeFields, resolveOptions, getConfigValue, isHotReloadable } from '@openacp/plugin-sdk/config'
+import { log } from '@openacp/plugin-sdk'
 import type { DiscordAdapter } from '../adapter.js'
 
 function formatFieldLabel(field: ConfigFieldDef, value: unknown): string {

@@ -1,5 +1,12 @@
 import type { Session } from '@openacp/plugin-sdk'
 
+export interface DiscordPlatformData {
+  guildId: string
+  channelId: string
+  threadId?: string
+  messageId?: string
+}
+
 export interface DiscordChannelConfig {
   enabled: boolean
   botToken: string
