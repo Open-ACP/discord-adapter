@@ -16,8 +16,8 @@ importers:
         version: 5.1.7
     devDependencies:
       '@openacp/plugin-sdk':
-        specifier: '>=2026.0.0'
-        version: 2026.327.1(@openacp/cli@2026.327.1(@types/express@5.0.6)(@types/node@25.5.0))
+        specifier: ^2026.327.3
+        version: 2026.327.3(@openacp/cli@2026.327.1(@types/express@5.0.6)(@types/node@25.5.0))
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
@@ -471,8 +471,8 @@ packages:
     engines: {node: '>=20'}
     hasBin: true
 
-  '@openacp/plugin-sdk@2026.327.1':
-    resolution: {integrity: sha512-hll2vK1HKkn8reK/lYF3hZViOZmkcoW74Blu4U45wrq2W1dG0+23Oir9cW8gD0qK6HF8XkZeO9x1FTZnr3kQ6A==}
+  '@openacp/plugin-sdk@2026.327.3':
+    resolution: {integrity: sha512-IA5Oph2mG6NZt0P8Ty8pE4hkT8CiXZzsh/M8+2IMhFgMRoA4CpUBLU7T/dHDrwPJLcHZa574tyowwyOIW/T1+A==}
     peerDependencies:
       '@openacp/cli': '>=0.6.0'
 
@@ -2155,7 +2155,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@openacp/plugin-sdk@2026.327.1(@openacp/cli@2026.327.1(@types/express@5.0.6)(@types/node@25.5.0))':
+  '@openacp/plugin-sdk@2026.327.3(@openacp/cli@2026.327.1(@types/express@5.0.6)(@types/node@25.5.0))':
     dependencies:
       '@openacp/cli': 2026.327.1(@types/express@5.0.6)(@types/node@25.5.0)
 
