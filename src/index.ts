@@ -6,7 +6,7 @@ function createDiscordPlugin(): OpenACPPlugin {
 
   return {
     name: '@openacp/adapter-discord',
-    version: '1.0.0',
+    version: '0.1.0',
     description: 'Discord adapter with forum threads',
     essential: false,
     pluginDependencies: {
