@@ -32,6 +32,7 @@
   "files": [
     "dist"
   ],
+  "packageManager": "pnpm@9.15.0",
   "license": "MIT",
   "repository": {
     "type": "git",
