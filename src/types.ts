@@ -5,6 +5,7 @@ export interface DiscordPlatformData {
   channelId: string
   threadId?: string
   messageId?: string
+  skillMsgId?: string
 }
 
 export interface DiscordChannelConfig {

@@ -246,7 +246,7 @@ export class DiscordAdapter extends MessagingAdapter {
                   options: Object.fromEntries(
                     interaction.options.data.map((o) => [o.name, String(o.value ?? "")]),
                   ),
-                  reply: async (content) => {
+                  reply: async (content: string) => {
                     if (typeof content === "string") {
                       if (interaction.replied || interaction.deferred) {
                         await interaction.editReply({ content });
@@ -288,7 +288,7 @@ export class DiscordAdapter extends MessagingAdapter {
                 sessionId,
                 channelId: "discord",
                 userId: interaction.user.id,
-                reply: async (content) => {
+                reply: async (content: string) => {
                   if (typeof content === "string") {
                     if (interaction.replied || interaction.deferred) {
                       await interaction.editReply({ content });

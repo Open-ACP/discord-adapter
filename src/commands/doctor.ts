@@ -22,7 +22,7 @@ function renderReport(report: DoctorReport): {
   for (const category of report.categories) {
     lines.push(`**${category.name}**`)
     for (const result of category.results) {
-      lines.push(`  ${icons[result.status]} ${result.message}`)
+      lines.push(`  ${icons[result.status as keyof typeof icons]} ${result.message}`)
     }
     lines.push('')
   }
