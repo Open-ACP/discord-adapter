@@ -613,7 +613,6 @@ export class ActivityTracker {
     id: string,
     status: string,
     viewerLinks?: ViewerLinks,
-    viewerFilePath?: string,
     content?: string | null,
     rawInput?: unknown,
     diffStats?: { added: number; removed: number },
@@ -626,6 +625,7 @@ export class ActivityTracker {
         const prevSpec = this.specBuilder.buildToolSpec(prevEntry, this._outputMode, this.sessionContext);
         this.previousToolCard.updateFromSpec(prevSpec);
       }
+      return;
     }
 
     // Also try current map
