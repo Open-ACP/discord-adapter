@@ -27,9 +27,8 @@ import { log, MessagingAdapter, SendQueue } from "@openacp/plugin-sdk";
 import type { CommandRegistry } from "@openacp/plugin-sdk";
 import { DiscordRenderer } from "./renderer.js";
 import type { DiscordChannelConfig } from "./types.js";
-import { DiscordToolCallTracker } from "./tool-call-tracker.js";
 import { DiscordDraftManager } from "./draft-manager.js";
-import { ActivityTracker } from "./activity.js";
+import { ActivityTracker, type ToolCallMeta, type OutputMode } from "./activity.js";
 import { SkillCommandManager } from "./skill-command-manager.js";
 import { PermissionHandler } from "./permissions.js";
 import {
@@ -64,8 +63,8 @@ export class DiscordAdapter extends MessagingAdapter {
   private client: Client;
   private discordConfig: DiscordChannelConfig;
   private sendQueue: SendQueue;
-  private toolTracker: DiscordToolCallTracker;
   private draftManager: DiscordDraftManager;
+  private _outputModeResolver = new OutputModeResolver();
   private skillManager!: SkillCommandManager;
   private permissionHandler!: PermissionHandler;
   private sessionTrackers: Map<string, ActivityTracker> = new Map();
@@ -97,7 +96,6 @@ export class DiscordAdapter extends MessagingAdapter {
     });
 
     this.sendQueue = new SendQueue({ minInterval: 1000 });
-    this.toolTracker = new DiscordToolCallTracker(this.sendQueue);
     this.draftManager = new DiscordDraftManager(this.sendQueue);
     this.fileService = core.fileService;
 
@@ -659,17 +657,33 @@ export class DiscordAdapter extends MessagingAdapter {
 
   // ─── Helper: get or create activity tracker ──────────────────────────────
 
+  private resolveMode(sessionId: string): OutputMode {
+    return this._outputModeResolver.resolve(
+      this.core.configManager as any,
+      this.name,
+      sessionId,
+      this.core.sessionManager as any,
+    );
+  }
+
   private getOrCreateTracker(
     sessionId: string,
-    thread: ThreadChannel,
+    thread: TextChannel | ThreadChannel,
+    outputMode: OutputMode = "medium",
   ): ActivityTracker {
-    if (!this.sessionTrackers.has(sessionId)) {
-      this.sessionTrackers.set(
+    let tracker = this.sessionTrackers.get(sessionId);
+    if (!tracker) {
+      tracker = new ActivityTracker(
+        thread,
+        this.sendQueue,
+        outputMode,
         sessionId,
-        new ActivityTracker(thread, this.sendQueue, "medium", sessionId),
       );
+      this.sessionTrackers.set(sessionId, tracker);
+    } else {
+      tracker.setOutputMode(outputMode);
     }
-    return this.sessionTrackers.get(sessionId)!;
+    return tracker;
   }
 
   private getSessionContext(sessionId: string): { thread: ThreadChannel; isAssistant: boolean } {
@@ -717,173 +731,133 @@ export class DiscordAdapter extends MessagingAdapter {
 
   protected async handleThought(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
     const { thread } = this.getSessionContext(sessionId);
-    const tracker = this.getOrCreateTracker(sessionId, thread);
+    const mode = this.resolveMode(sessionId);
+    const tracker = this.getOrCreateTracker(sessionId, thread, mode);
     await tracker.onThought(content.text || "");
   }
 
   protected async handleText(sessionId: string, content: OutgoingMessage): Promise<void> {
     const { thread } = this.getSessionContext(sessionId);
-    const tracker = this.getOrCreateTracker(sessionId, thread);
-    await tracker.onTextStart();
+    if (!this.draftManager.hasDraft(sessionId)) {
+      const mode = this.resolveMode(sessionId);
+      const tracker = this.getOrCreateTracker(sessionId, thread, mode);
+      await tracker.onTextStart();
+    }
     const draft = this.draftManager.getOrCreate(sessionId, thread);
     draft.append(content.text);
     this.draftManager.appendText(sessionId, content.text);
   }
 
-  protected async handleToolCall(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
+  protected async handleToolCall(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
     const { thread, isAssistant } = this.getSessionContext(sessionId);
-    const meta = content.metadata ?? {};
-    const toolName = String(meta.name ?? content.text ?? "Tool");
-
-    const tracker = this.getOrCreateTracker(sessionId, thread);
-    const toolMeta = {
-      id: String(meta.id ?? ""),
-      name: toolName,
-      kind: meta.kind as string | undefined,
-      status: String(meta.status ?? "running"),
-      content: meta.content,
-      rawInput: meta.rawInput,
-      viewerLinks: meta.viewerLinks as { file?: string; diff?: string } | undefined,
-      viewerFilePath: meta.viewerFilePath as string | undefined,
-      displaySummary: meta.displaySummary as string | undefined,
-      displayTitle: meta.displayTitle as string | undefined,
-      displayKind: meta.displayKind as string | undefined,
-    };
-    const kind = (meta.kind as string) ?? "other";
-    await tracker.onToolCall(toolMeta, kind, meta.rawInput);
-    await this.draftManager.finalize(
-      sessionId,
-      thread,
-      isAssistant,
-    );
-    await this.toolTracker.trackNewCall(
-      sessionId,
-      thread,
+    const meta = (content.metadata ?? {}) as Partial<ToolCallMeta>;
+    const mode = this.resolveMode(sessionId);
+    const tracker = this.getOrCreateTracker(sessionId, thread, mode);
+    await this.draftManager.finalize(sessionId, thread, isAssistant);
+    await tracker.onToolCall(
       {
-        id: String(meta.id ?? ""),
-        name: toolName,
-        kind: meta.kind as string | undefined,
-        status: String(meta.status ?? "running"),
+        id: meta.id ?? "",
+        name: meta.name ?? content.text ?? "Tool",
+        kind: meta.kind,
+        status: meta.status,
         content: meta.content,
         rawInput: meta.rawInput,
-        viewerLinks: meta.viewerLinks as
-          | { file?: string; diff?: string }
-          | undefined,
-        viewerFilePath: meta.viewerFilePath as string | undefined,
+        viewerLinks: meta.viewerLinks,
+        viewerFilePath: meta.viewerFilePath,
         displaySummary: meta.displaySummary as string | undefined,
         displayTitle: meta.displayTitle as string | undefined,
         displayKind: meta.displayKind as string | undefined,
       },
-      verbosity,
+      String(meta.kind ?? ""),
+      meta.rawInput,
     );
   }
 
-  protected async handleToolUpdate(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
-    const meta = content.metadata ?? {};
-    await this.toolTracker.updateCall(
-      sessionId,
-      {
-        id: String(meta.id ?? ""),
-        name: content.text || String(meta.name ?? ""),
-        kind: meta.kind as string | undefined,
-        status: String(meta.status ?? "completed"),
-        content: meta.content,
-        rawInput: meta.rawInput,
-        viewerLinks: meta.viewerLinks as
-          | { file?: string; diff?: string }
-          | undefined,
-        viewerFilePath: meta.viewerFilePath as string | undefined,
-        displaySummary: meta.displaySummary as string | undefined,
-        displayTitle: meta.displayTitle as string | undefined,
-        displayKind: meta.displayKind as string | undefined,
-      },
-      verbosity,
-    );
-  }
-
-  protected async handlePlan(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
+  protected async handleToolUpdate(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
     const { thread } = this.getSessionContext(sessionId);
-    const entries = (content.metadata?.entries ?? []) as PlanEntry[];
-    const tracker = this.getOrCreateTracker(sessionId, thread);
+    const meta = (content.metadata ?? {}) as Partial<ToolCallMeta & { diffStats?: { added: number; removed: number } }>;
+    const mode = this.resolveMode(sessionId);
+    const tracker = this.getOrCreateTracker(sessionId, thread, mode);
+    await tracker.onToolUpdate(
+      meta.id ?? "",
+      meta.status ?? "completed",
+      meta.viewerLinks as { file?: string; diff?: string } | undefined,
+      typeof meta.content === "string" ? meta.content : null,
+      meta.rawInput ?? undefined,
+      meta.diffStats as { added: number; removed: number } | undefined,
+    );
+  }
+
+  protected async handlePlan(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+    const { thread } = this.getSessionContext(sessionId);
+    const meta = (content.metadata ?? {}) as { entries?: PlanEntry[] };
+    const entries = meta.entries ?? [];
+    const mode = this.resolveMode(sessionId);
+    const tracker = this.getOrCreateTracker(sessionId, thread, mode);
     await tracker.onPlan(entries);
   }
 
-  protected async handleUsage(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
+  protected async handleUsage(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
     const { thread, isAssistant } = this.getSessionContext(sessionId);
-    await this.draftManager.finalize(
-      sessionId,
-      thread,
-      isAssistant,
-    );
-    const meta = content.metadata ?? {};
-    // Usage is sent as a standalone embed (ActivityTracker no longer handles usage)
+    await this.draftManager.finalize(sessionId, thread, isAssistant);
+    const meta = content.metadata as { tokensUsed?: number; contextSize?: number; cost?: number; duration?: number } | undefined;
+    const mode = this.resolveMode(sessionId);
+
     try {
       const { renderUsageEmbed } = await import("./formatting.js");
-      const embed = renderUsageEmbed(
-        {
-          tokensUsed: meta.tokensUsed as number | undefined,
-          contextSize: meta.contextSize as number | undefined,
-          cost: meta.cost as number | undefined,
-        },
-        verbosity as "low" | "medium" | "high",
-      );
+      const embed = renderUsageEmbed(meta ?? {}, mode);
       await this.sendQueue.enqueue(
         () => thread.send({ embeds: [embed] }),
         { type: "other" },
       );
-    } catch {
-      /* best effort */
+    } catch (err) {
+      log.warn({ err, sessionId }, "Failed to send usage embed");
     }
-    // Send usage notification to notification channel
-    try {
-      const deepLink = buildDeepLink(this.guild.id, thread.id);
-      await this.sendNotification({
-        sessionId,
-        type: "completed",
-        summary: content.text || "Session completed",
-        deepLink,
-      });
-    } catch {
-      /* best effort */
+
+    // Notify notification channel
+    if (this.notificationChannel && sessionId !== this.assistantSession?.id) {
+      const sess = this.core.sessionManager.getSession(sessionId);
+      const name = sess?.name || "Session";
+      try {
+        await this.notificationChannel.send(`\u2705 **${name}** \u2014 Task completed.`);
+      } catch {
+        /* best effort */
+      }
     }
   }
 
   protected async handleSessionEnd(sessionId: string, _content: OutgoingMessage): Promise<void> {
     const { thread, isAssistant } = this.getSessionContext(sessionId);
-    await this.draftManager.finalize(
-      sessionId,
-      thread,
-      isAssistant,
-    );
-    const tracker = this.getOrCreateTracker(sessionId, thread);
-    await tracker.cleanup();
-    this.toolTracker.cleanup(sessionId);
-    this.sessionTrackers.delete(sessionId);
+    await this.draftManager.finalize(sessionId, thread, isAssistant);
+    this.draftManager.cleanup(sessionId);
     await this.skillManager.cleanup(sessionId);
-    try {
-      await this.sendQueue.enqueue(
-        () => thread.send({ content: "✅ Done" }),
-        { type: "other" },
-      );
-    } catch {
-      /* best effort */
+    const tracker = this.sessionTrackers.get(sessionId);
+    if (tracker) {
+      await tracker.cleanup();
+      this.sessionTrackers.delete(sessionId);
+    } else {
+      try {
+        await this.sendQueue.enqueue(
+          () => thread.send({ content: "\u2705 **Done**" }),
+          { type: "other" },
+        );
+      } catch {
+        /* best effort */
+      }
     }
   }
 
   protected async handleError(sessionId: string, content: OutgoingMessage): Promise<void> {
     const { thread, isAssistant } = this.getSessionContext(sessionId);
-    await this.draftManager.finalize(
-      sessionId,
-      thread,
-      isAssistant,
-    );
-    const tracker = this.getOrCreateTracker(sessionId, thread);
-    await tracker.cleanup();
-    this.toolTracker.cleanup(sessionId);
-    this.sessionTrackers.delete(sessionId);
+    await this.draftManager.finalize(sessionId, thread, isAssistant);
+    const tracker = this.sessionTrackers.get(sessionId);
+    if (tracker) {
+      tracker.destroy();
+      this.sessionTrackers.delete(sessionId);
+    }
     try {
       await this.sendQueue.enqueue(
-        () => thread.send({ content: `❌ Error: ${content.text}` }),
+        () => thread.send({ content: `\u274c **Error:** ${content.text}` }),
         { type: "other" },
       );
     } catch {
@@ -1097,5 +1071,35 @@ export class DiscordAdapter extends MessagingAdapter {
 
   getAssistantThreadId(): string | null {
     return this.discordConfig.assistantThreadId;
+  }
+}
+
+// ─── OutputModeResolver ────────────────────────────────────────────────────────
+// Resolves output mode with 3-level cascade:
+// Session override -> Adapter override -> Global default -> "medium"
+
+class OutputModeResolver {
+  resolve(
+    configManager: { get(): Record<string, unknown> },
+    adapterName: string,
+    sessionId?: string,
+    sessionManager?: { getSession(id: string): { record?: { outputMode?: string } } | undefined },
+  ): OutputMode {
+    // Level 3: Session override (highest priority)
+    if (sessionId && sessionManager) {
+      const session = sessionManager.getSession(sessionId);
+      const mode = session?.record?.outputMode;
+      if (mode === "low" || mode === "medium" || mode === "high") return mode;
+    }
+    // Level 2: Adapter override
+    const config = configManager.get();
+    const channels = config.channels as Record<string, Record<string, unknown>> | undefined;
+    const adapterConfig = channels?.[adapterName];
+    const adapterMode = adapterConfig?.outputMode;
+    if (adapterMode === "low" || adapterMode === "medium" || adapterMode === "high") return adapterMode as OutputMode;
+    // Level 1: Global default
+    const globalMode = config.outputMode;
+    if (globalMode === "low" || globalMode === "medium" || globalMode === "high") return globalMode as OutputMode;
+    return "medium";
   }
 }
