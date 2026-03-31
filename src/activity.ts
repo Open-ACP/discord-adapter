@@ -515,6 +515,9 @@ export class ActivityTracker {
   private thoughtBuffer: ThoughtBuffer;
   private toolCardMsg?: Message;
   private previousToolCardMsg?: Message;
+  // Per-cycle state preserved for re-renders
+  private _currentPlanEntries?: PlanEntry[];
+  private _prevThoughtViewerLink?: string;
 
   // Typing indicator state
   private typingDismissed = false;
@@ -557,6 +560,9 @@ export class ActivityTracker {
       const spec = this.specBuilder.buildToolSpec(entry, this._outputMode, this.sessionContext);
       this.toolCard!.updateFromSpec(spec);
     });
+    if (this._currentPlanEntries) {
+      this.toolCard.updatePlan(this._currentPlanEntries);
+    }
   }
 
   async onNewPrompt(): Promise<void> {
@@ -575,6 +581,9 @@ export class ActivityTracker {
       this._currentCardRef = undefined;
     }
 
+    // Discard old previous card's context before overwriting
+    this._prevThoughtViewerLink = undefined;
+
     // Swap current → previous
     this.previousToolCard = this.toolCard;
     this.previousToolCardMsg = this.toolCardMsg;
@@ -586,6 +595,7 @@ export class ActivityTracker {
     this.toolCard = undefined;
     this.toolCardMsg = undefined;
     this.flushPromise = Promise.resolve();
+    this._currentPlanEntries = undefined;
   }
 
   async onThought(text: string): Promise<void> {
@@ -603,14 +613,24 @@ export class ActivityTracker {
     // Seal current tool card so new tools go to a new card
     await this.sealToolCard();
 
-    // In high mode with tunnel: store thought content via viewer
+    // In high mode with tunnel: store thought and surface viewer link on previous card
     if (this._outputMode === "high" && this.tunnelService && this.sessionContext) {
       if (thoughtText.trim().length > 0) {
-        void this.tunnelService.getStore().storeOutput(
+        const id = this.tunnelService.getStore().storeOutput(
           this.sessionContext.id,
           "thinking",
           thoughtText,
         );
+        if (id !== null) {
+          this._prevThoughtViewerLink = this.tunnelService.outputUrl(id);
+          // Re-render previous card to include the 💭 viewer link
+          if (this.previousToolStateMap && this.previousToolCard) {
+            this.previousToolStateMap.forEach((entry) => {
+              const spec = this.specBuilder.buildToolSpec(entry, this._outputMode, this.sessionContext);
+              this.previousToolCard!.updateFromSpec(spec);
+            });
+          }
+        }
       }
     }
   }
@@ -658,6 +678,7 @@ export class ActivityTracker {
 
   async onPlan(entries: PlanEntry[]): Promise<void> {
     this.stopTyping();
+    this._currentPlanEntries = entries;
     this.ensureToolCard();
     this.toolCard!.updatePlan(entries);
   }
@@ -720,6 +741,9 @@ export class ActivityTracker {
       this._currentCardRef = undefined;
     }
 
+    // Old previous card's link is no longer relevant after this swap
+    this._prevThoughtViewerLink = undefined;
+
     // Swap current → previous
     this.previousToolCard = this.toolCard;
     this.previousToolCardMsg = this.toolCardMsg;
@@ -731,13 +755,15 @@ export class ActivityTracker {
     this.toolCard = undefined;
     this.toolCardMsg = undefined;
     this.flushPromise = Promise.resolve();
+    this._currentPlanEntries = undefined;
   }
 
   private async flushToolCard(
     snapshot: ToolCardSnapshot,
     isPrevious: boolean,
   ): Promise<void> {
-    const { embeds, components } = renderToolCard(snapshot, this._outputMode, this.sessionId);
+    const thoughtViewerLink = isPrevious ? this._prevThoughtViewerLink : undefined;
+    const { embeds, components } = renderToolCard(snapshot, this._outputMode, this.sessionId, thoughtViewerLink);
 
     if (embeds.length === 0) return;
 

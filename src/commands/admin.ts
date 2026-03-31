@@ -313,7 +313,10 @@ export async function handleOutputMode(
     return;
   }
 
-  if (level === "low" || level === "medium" || level === "high") {
+  if (level === "reset") {
+    await core.configManager.save({ channels: { discord: { outputMode: undefined } } } as any, "channels.discord.outputMode");
+    await interaction.reply({ content: "🔄 Adapter output mode reset to global default.", ephemeral: true });
+  } else if (level === "low" || level === "medium" || level === "high") {
     await core.configManager.save({ channels: { discord: { outputMode: level } } }, "channels.discord.outputMode");
     await interaction.reply({ content: `${OUTPUT_MODE_LABELS[level]} Output mode set to **${level}**.`, ephemeral: true });
   } else {
@@ -321,6 +324,7 @@ export async function handleOutputMode(
     await interaction.reply({
       content: `📊 Current output mode: **${current}**\n\n` +
         `\`/outputmode low|medium|high\` — Set adapter default\n` +
+        `\`/outputmode reset\` — Reset adapter to global default\n` +
         `\`/outputmode session low|medium|high|reset\` — Override for this session\n\n` +
         `• **low** — icons only\n• **medium** — title + description (default)\n• **high** — full detail`,
       ephemeral: true,

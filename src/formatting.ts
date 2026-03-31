@@ -229,6 +229,7 @@ export function renderToolCard(
   snapshot: ToolCardSnapshot,
   mode: OutputMode,
   sessionId?: string,
+  thoughtViewerLink?: string,
 ): ToolCardResult {
   const { specs, totalVisible, completedVisible, allComplete } = snapshot;
 
@@ -269,6 +270,11 @@ export function renderToolCard(
       );
       description += "\n\n📋 **Plan:**\n" + planLines.join("\n");
     }
+  }
+
+  // Thought viewer link (high mode only)
+  if (mode === "high" && thoughtViewerLink) {
+    description += `\n\n💭 [View Thinking](${thoughtViewerLink})`;
   }
 
   // If description is empty (no visible specs, no plan text), return empty result

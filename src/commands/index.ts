@@ -109,7 +109,7 @@ export const SLASH_COMMANDS = [
           { name: "🔇 Low — icons only", value: "low" },
           { name: "📊 Medium — balanced (default)", value: "medium" },
           { name: "🔍 High — full detail", value: "high" },
-          { name: "🔄 Reset session override", value: "reset" },
+          { name: "🔄 Reset to default", value: "reset" },
         ),
     )
     .addStringOption((o) =>
@@ -134,7 +134,7 @@ export const SLASH_COMMANDS = [
           { name: "🔇 Low — icons only", value: "low" },
           { name: "📊 Medium — balanced (default)", value: "medium" },
           { name: "🔍 High — full detail", value: "high" },
-          { name: "🔄 Reset session override", value: "reset" },
+          { name: "🔄 Reset to default", value: "reset" },
         ),
     )
     .addStringOption((o) =>
