@@ -237,10 +237,12 @@ export async function setupButtonCallbacks(
       if (mode === "low" || mode === "medium" || mode === "high") {
         const session = adapter.core.sessionManager.getSession(sessionId);
         if (session) {
+          // ACK immediately — patchRecord does async I/O and may exceed 3s deadline
+          await interaction.deferReply({ ephemeral: true });
           await adapter.core.sessionManager.patchRecord(sessionId, { outputMode: mode } as any);
           // Re-render current tool card immediately with new mode
           adapter.updateSessionOutputMode(sessionId, mode);
-          await interaction.reply({ content: `Switched to **${mode}** mode.`, ephemeral: true });
+          await interaction.editReply(`Switched to **${mode}** mode.`);
         } else {
           await interaction.reply({ content: "Session not found.", ephemeral: true });
         }
@@ -253,8 +255,10 @@ export async function setupButtonCallbacks(
       const sessionId = customId.slice("cancel:".length);
       const session = adapter.core.sessionManager.getSession(sessionId);
       if (session) {
+        // ACK immediately — abortPrompt signals subprocess and may take time
+        await interaction.deferReply({ ephemeral: true });
         await session.abortPrompt();
-        await interaction.reply({ content: "🚫 Session cancelled.", ephemeral: true });
+        await interaction.editReply("🚫 Session cancelled.");
       } else {
         await interaction.reply({ content: "Session not found.", ephemeral: true });
       }

@@ -523,6 +523,8 @@ export class ActivityTracker {
   // Flush promise chain per card
   private flushPromise: Promise<void> = Promise.resolve();
   private previousFlushPromise: Promise<void> = Promise.resolve();
+  // Mutable ref so the onFlush closure can self-detect after sealToolCard swaps it
+  private _currentCardRef?: { isPrevious: boolean };
 
   constructor(
     channel: TextChannel | ThreadChannel,
@@ -567,6 +569,12 @@ export class ActivityTracker {
       await this.flushPromise;
     }
 
+    // Mark card as previous BEFORE swapping so any late flushes use the right chain
+    if (this._currentCardRef) {
+      this._currentCardRef.isPrevious = true;
+      this._currentCardRef = undefined;
+    }
+
     // Swap current → previous
     this.previousToolCard = this.toolCard;
     this.previousToolCardMsg = this.toolCardMsg;
@@ -589,7 +597,7 @@ export class ActivityTracker {
   }
 
   async onTextStart(): Promise<void> {
-    this.thoughtBuffer.seal();
+    const thoughtText = this.thoughtBuffer.seal();
     this.stopTyping();
 
     // Seal current tool card so new tools go to a new card
@@ -597,15 +605,12 @@ export class ActivityTracker {
 
     // In high mode with tunnel: store thought content via viewer
     if (this._outputMode === "high" && this.tunnelService && this.sessionContext) {
-      const thoughtText = this.thoughtBuffer.getText();
       if (thoughtText.trim().length > 0) {
-        const id = this.tunnelService.getStore().storeOutput(
+        void this.tunnelService.getStore().storeOutput(
           this.sessionContext.id,
           "thinking",
           thoughtText,
         );
-        // Could display viewer link — for now just stored
-        void id;
       }
     }
   }
@@ -685,11 +690,19 @@ export class ActivityTracker {
       return;
     }
     if (!this.toolCard) {
+      const ref = { isPrevious: false };
+      this._currentCardRef = ref;
       this.toolCard = new ToolCardState({
         onFlush: (snapshot) => {
-          this.flushPromise = this.flushPromise
-            .then(() => this.flushToolCard(snapshot, false))
-            .catch(() => {});
+          if (ref.isPrevious) {
+            this.previousFlushPromise = this.previousFlushPromise
+              .then(() => this.flushToolCard(snapshot, true))
+              .catch(() => {});
+          } else {
+            this.flushPromise = this.flushPromise
+              .then(() => this.flushToolCard(snapshot, false))
+              .catch(() => {});
+          }
         },
       });
     }
@@ -700,6 +713,12 @@ export class ActivityTracker {
 
     this.toolCard.finalize();
     await this.flushPromise;
+
+    // Mark card as previous BEFORE swapping so any late flushes use the right chain
+    if (this._currentCardRef) {
+      this._currentCardRef.isPrevious = true;
+      this._currentCardRef = undefined;
+    }
 
     // Swap current → previous
     this.previousToolCard = this.toolCard;

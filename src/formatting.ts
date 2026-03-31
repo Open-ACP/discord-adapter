@@ -325,7 +325,7 @@ export function renderToolCard(
     row.addComponents(
       new ButtonBuilder()
         .setCustomId(`cancel:${sessionId}`)
-        .setLabel("Cancel")
+        .setLabel("❌ Cancel")
         .setStyle(ButtonStyle.Danger),
     );
 

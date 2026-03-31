@@ -480,6 +480,14 @@ export class DiscordAdapter extends MessagingAdapter {
           return;
         }
 
+        // Reset tracker state for new prompt cycle on existing sessions
+        if (sessionId !== "unknown") {
+          const tracker = this.sessionTrackers.get(sessionId);
+          if (tracker) {
+            await tracker.onNewPrompt();
+          }
+        }
+
         // Route to core for session dispatch
         await this.core.handleMessage({
           channelId: "discord",
