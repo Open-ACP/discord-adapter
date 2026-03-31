@@ -112,9 +112,11 @@ function formatTokens(n: number): string {
   return String(n);
 }
 
+const TRUNCATION_SUFFIX = "… (truncated)";
+
 function truncateContent(text: string, max: number): string {
   if (text.length <= max) return text;
-  return text.slice(0, max - 14) + "… (truncated)";
+  return text.slice(0, max - TRUNCATION_SUFFIX.length) + TRUNCATION_SUFFIX;
 }
 
 // ─── Embed color constants ──────────────────────────────────────────────────
@@ -125,8 +127,9 @@ const COLOR_RED = 0xe74c3c;
 const COLOR_DARK_GRAY = 0x2f3136;
 const COLOR_YELLOW = 0xf1c40f;
 
-const DONE_STATUSES = new Set(["completed", "done", "failed", "error"]);
 const ERROR_STATUSES = new Set(["error", "failed"]);
+const LOW_MODE_COLUMNS = 3;
+const INLINE_OUTPUT_MAX = 800;
 
 // ─── renderSpecSection ──────────────────────────────────────────────────────
 
@@ -176,7 +179,7 @@ export function renderSpecSection(spec: ToolDisplaySpec, mode: OutputMode): stri
   if (mode === "high") {
     if (spec.outputContent || spec.outputFallbackContent) {
       const raw = spec.outputContent ?? spec.outputFallbackContent!;
-      const truncated = truncateContent(raw, 800);
+      const truncated = truncateContent(raw, INLINE_OUTPUT_MAX);
       lines.push(`\`\`\`\n${truncated}\n\`\`\``);
     }
     if (spec.outputViewerLink) {
@@ -245,8 +248,8 @@ export function renderToolCard(
   if (mode === "low") {
     // Compact grid: 3 per line with " · " separators
     const lines: string[] = [];
-    for (let i = 0; i < sections.length; i += 3) {
-      lines.push(sections.slice(i, i + 3).join(" · "));
+    for (let i = 0; i < sections.length; i += LOW_MODE_COLUMNS) {
+      lines.push(sections.slice(i, i + LOW_MODE_COLUMNS).join(" · "));
     }
     description = lines.join("\n");
   } else {
@@ -258,13 +261,8 @@ export function renderToolCard(
     const entries = snapshot.planEntries;
     if (mode === "high") {
       // Full plan list in description
-      const statusIcon: Record<string, string> = {
-        completed: "✅",
-        in_progress: "🔄",
-        pending: "⏳",
-      };
       const planLines = entries.map(
-        (e, i) => `${statusIcon[e.status] ?? "⬜"} ${i + 1}. ${e.content}`,
+        (e, i) => `${STATUS_ICONS[e.status] ?? "⬜"} ${i + 1}. ${e.content}`,
       );
       description += "\n\n📋 **Plan:**\n" + planLines.join("\n");
     }
