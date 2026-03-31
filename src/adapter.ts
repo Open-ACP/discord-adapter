@@ -686,6 +686,14 @@ export class DiscordAdapter extends MessagingAdapter {
     return tracker;
   }
 
+  /** Called from button router to switch mode and re-render the current tool card. */
+  updateSessionOutputMode(sessionId: string, mode: OutputMode): void {
+    const tracker = this.sessionTrackers.get(sessionId);
+    if (!tracker) return;
+    tracker.setOutputMode(mode);
+    tracker.rerender();
+  }
+
   private getSessionContext(sessionId: string): { thread: ThreadChannel; isAssistant: boolean } {
     const ctx = this._sessionContexts.get(sessionId);
     if (!ctx) {

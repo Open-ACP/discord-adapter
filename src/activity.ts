@@ -125,6 +125,10 @@ export class ToolStateMap {
     return this.entries.get(id);
   }
 
+  forEach(cb: (entry: ToolEntry) => void): void {
+    this.entries.forEach(cb);
+  }
+
   clear(): void {
     this.entries.clear();
     this.pendingUpdates.clear();
@@ -541,6 +545,16 @@ export class ActivityTracker {
 
   setOutputMode(mode: OutputMode): void {
     this._outputMode = mode;
+  }
+
+  /** Re-render the current tool card with the current outputMode.
+   *  Called when the user switches output mode mid-prompt via action row buttons. */
+  rerender(): void {
+    if (!this.toolCard) return;
+    this.toolStateMap.forEach((entry) => {
+      const spec = this.specBuilder.buildToolSpec(entry, this._outputMode, this.sessionContext);
+      this.toolCard!.updateFromSpec(spec);
+    });
   }
 
   async onNewPrompt(): Promise<void> {

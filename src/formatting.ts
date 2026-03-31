@@ -145,11 +145,9 @@ export function renderSpecSection(spec: ToolDisplaySpec, mode: OutputMode): stri
   // Medium and high share the same base structure
   const lines: string[] = [];
 
-  // Title line: {statusIcon} {kindIcon} **{title}**
-  let titleLine = `${statusIcon} ${kindIcon} **${spec.title}**`;
-  if (spec.isNoise && mode === "high") {
-    titleLine += " 👁️";
-  }
+  // Title line: noise tools use 👁️ instead of status icon
+  const leadIcon = spec.isNoise && mode === "high" ? "👁️" : statusIcon;
+  const titleLine = `${leadIcon} ${kindIcon} **${spec.title}**`;
   lines.push(titleLine);
 
   // Description line
@@ -173,6 +171,11 @@ export function renderSpecSection(spec: ToolDisplaySpec, mode: OutputMode): stri
   }
   if (diffParts.length > 0) {
     lines.push(` ╰ ${diffParts.join(" · ")}`);
+  }
+
+  // Medium mode: show output summary if no inline content
+  if (spec.outputSummary && !spec.outputContent) {
+    lines.push(` ╰ ${spec.outputSummary}`);
   }
 
   // High mode extras: inline output, output viewer link
@@ -304,9 +307,9 @@ export function renderToolCard(
 
     const modes: OutputMode[] = ["low", "medium", "high"];
     const modeLabels: Record<OutputMode, string> = {
-      low: "Compact",
-      medium: "Normal",
-      high: "Detailed",
+      low: "🔇 Low",
+      medium: "📊 Medium",
+      high: "🔍 High",
     };
 
     for (const m of modes) {

@@ -238,6 +238,8 @@ export async function setupButtonCallbacks(
         const session = adapter.core.sessionManager.getSession(sessionId);
         if (session) {
           await adapter.core.sessionManager.patchRecord(sessionId, { outputMode: mode } as any);
+          // Re-render current tool card immediately with new mode
+          adapter.updateSessionOutputMode(sessionId, mode);
           await interaction.reply({ content: `Switched to **${mode}** mode.`, ephemeral: true });
         } else {
           await interaction.reply({ content: "Session not found.", ephemeral: true });
