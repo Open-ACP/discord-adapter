@@ -25,6 +25,7 @@ import {
   handleRestart,
   handleUpdate,
   handleVerbosity,
+  handleOutputMode,
 } from "./admin.js";
 import {
   handleMenu,
@@ -99,8 +100,11 @@ export async function handleSlashCommand(
       case "tts":
         await handleTTS(interaction, adapter);
         break;
+      case "outputmode":
+        await handleOutputMode(interaction, adapter);
+        break;
       case "verbosity":
-        await handleVerbosity(interaction, adapter);
+        await handleOutputMode(interaction, adapter);
         break;
       default:
         log.warn({ commandName }, "[discord-router] Unknown slash command");
@@ -222,6 +226,36 @@ export async function setupButtonCallbacks(
 
     if (customId.startsWith("i:")) {
       await handleIntegrateButton(interaction, adapter);
+      return;
+    }
+
+    // Output mode buttons (om:{sessionId}:{mode})
+    if (customId.startsWith("om:")) {
+      const parts = customId.split(":");
+      const sessionId = parts[1];
+      const mode = parts[2];
+      if (mode === "low" || mode === "medium" || mode === "high") {
+        const session = adapter.core.sessionManager.getSession(sessionId);
+        if (session) {
+          await adapter.core.sessionManager.patchRecord(sessionId, { outputMode: mode } as any);
+          await interaction.reply({ content: `Switched to **${mode}** mode.`, ephemeral: true });
+        } else {
+          await interaction.reply({ content: "Session not found.", ephemeral: true });
+        }
+      }
+      return;
+    }
+
+    // Cancel button (cancel:{sessionId})
+    if (customId.startsWith("cancel:")) {
+      const sessionId = customId.slice("cancel:".length);
+      const session = adapter.core.sessionManager.getSession(sessionId);
+      if (session) {
+        await session.abortPrompt();
+        await interaction.reply({ content: "🚫 Session cancelled.", ephemeral: true });
+      } else {
+        await interaction.reply({ content: "Session not found.", ephemeral: true });
+      }
       return;
     }
 
