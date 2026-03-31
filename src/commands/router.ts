@@ -25,6 +25,7 @@ import {
   handleRestart,
   handleUpdate,
   handleVerbosity,
+  handleOutputMode,
 } from "./admin.js";
 import {
   handleMenu,
@@ -99,8 +100,11 @@ export async function handleSlashCommand(
       case "tts":
         await handleTTS(interaction, adapter);
         break;
+      case "outputmode":
+        await handleOutputMode(interaction, adapter);
+        break;
       case "verbosity":
-        await handleVerbosity(interaction, adapter);
+        await handleOutputMode(interaction, adapter);
         break;
       default:
         log.warn({ commandName }, "[discord-router] Unknown slash command");
@@ -222,6 +226,42 @@ export async function setupButtonCallbacks(
 
     if (customId.startsWith("i:")) {
       await handleIntegrateButton(interaction, adapter);
+      return;
+    }
+
+    // Output mode buttons (om:{sessionId}:{mode})
+    if (customId.startsWith("om:")) {
+      const parts = customId.split(":");
+      const sessionId = parts[1];
+      const mode = parts[2];
+      if (mode === "low" || mode === "medium" || mode === "high") {
+        const session = adapter.core.sessionManager.getSession(sessionId);
+        if (session) {
+          // ACK immediately — patchRecord does async I/O and may exceed 3s deadline
+          await interaction.deferReply({ ephemeral: true });
+          await adapter.core.sessionManager.patchRecord(sessionId, { outputMode: mode } as any);
+          // Re-render current tool card immediately with new mode
+          adapter.updateSessionOutputMode(sessionId, mode);
+          await interaction.editReply(`Switched to **${mode}** mode.`);
+        } else {
+          await interaction.reply({ content: "Session not found.", ephemeral: true });
+        }
+      }
+      return;
+    }
+
+    // Cancel button (cancel:{sessionId})
+    if (customId.startsWith("cancel:")) {
+      const sessionId = customId.slice("cancel:".length);
+      const session = adapter.core.sessionManager.getSession(sessionId);
+      if (session) {
+        // ACK immediately — abortPrompt signals subprocess and may take time
+        await interaction.deferReply({ ephemeral: true });
+        await session.abortPrompt();
+        await interaction.editReply("🚫 Session cancelled.");
+      } else {
+        await interaction.reply({ content: "Session not found.", ephemeral: true });
+      }
       return;
     }
 

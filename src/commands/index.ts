@@ -99,17 +99,51 @@ export const SLASH_COMMANDS = [
     ),
 
   new SlashCommandBuilder()
+    .setName("outputmode")
+    .setDescription("Set output detail level (low/medium/high)")
+    .addStringOption((o) =>
+      o
+        .setName("level")
+        .setDescription("Output mode level")
+        .addChoices(
+          { name: "🔇 Low — icons only", value: "low" },
+          { name: "📊 Medium — balanced (default)", value: "medium" },
+          { name: "🔍 High — full detail", value: "high" },
+          { name: "🔄 Reset to default", value: "reset" },
+        ),
+    )
+    .addStringOption((o) =>
+      o
+        .setName("scope")
+        .setDescription("Apply to adapter or current session")
+        .addChoices(
+          { name: "Adapter default", value: "adapter" },
+          { name: "This session only", value: "session" },
+        ),
+    ),
+
+  // Deprecated: use /outputmode instead
+  new SlashCommandBuilder()
     .setName("verbosity")
-    .setDescription("Set display verbosity level")
+    .setDescription("Set display verbosity (deprecated, use /outputmode)")
     .addStringOption((o) =>
       o
         .setName("level")
         .setDescription("Verbosity level")
-        .setRequired(true)
         .addChoices(
-          { name: "low — minimal, title only", value: "low" },
-          { name: "medium — balanced (default)", value: "medium" },
-          { name: "high — full detail with content", value: "high" },
+          { name: "🔇 Low — icons only", value: "low" },
+          { name: "📊 Medium — balanced (default)", value: "medium" },
+          { name: "🔍 High — full detail", value: "high" },
+          { name: "🔄 Reset to default", value: "reset" },
+        ),
+    )
+    .addStringOption((o) =>
+      o
+        .setName("scope")
+        .setDescription("Apply to adapter or current session")
+        .addChoices(
+          { name: "Adapter default", value: "adapter" },
+          { name: "This session only", value: "session" },
         ),
     ),
 ];

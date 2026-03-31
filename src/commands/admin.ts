@@ -276,34 +276,61 @@ export async function handleUpdate(
   );
 }
 
-// ─── Verbosity ─────────────────────────────────────────────────────────────
+// ─── Output Mode ────────────────────────────────────────────────────────────
 
-const VERBOSITY_LABELS: Record<string, string> = {
+const OUTPUT_MODE_LABELS: Record<string, string> = {
   low: "🔇 Low",
   medium: "📊 Medium",
-  high: "📖 High",
+  high: "🔍 High",
 };
 
-export async function handleVerbosity(
+export async function handleOutputMode(
   interaction: ChatInputCommandInteraction,
   adapter: DiscordAdapter,
 ): Promise<void> {
-  await interaction.deferReply({ ephemeral: true });
+  const level = interaction.options.getString("level") ?? null;
+  const scope = interaction.options.getString("scope") ?? null;
+  const core = adapter.core;
 
-  const level = interaction.options.getString("level", true);
-  if (level !== "low" && level !== "medium" && level !== "high") {
-    await interaction.editReply(
-      "⚠️ Invalid level. Use `low`, `medium`, or `high`.",
-    );
+  if (scope === "session") {
+    const threadId = interaction.channelId;
+    const session = core.sessionManager.getSessionByThread("discord", threadId);
+    if (!session) {
+      await interaction.reply({ content: "⚠️ No active session found in this thread.", ephemeral: true });
+      return;
+    }
+    if (level === "reset") {
+      await core.sessionManager.patchRecord(session.id, { outputMode: undefined } as any);
+      await interaction.reply({ content: "🔄 Session output mode reset to adapter default.", ephemeral: true });
+    } else if (level === "low" || level === "medium" || level === "high") {
+      await core.sessionManager.patchRecord(session.id, { outputMode: level } as any);
+      await interaction.reply({ content: `${OUTPUT_MODE_LABELS[level]} Session output mode set to **${level}**.`, ephemeral: true });
+    } else {
+      const record = core.sessionManager.getSessionRecord(session.id);
+      const current = (record as any)?.outputMode ?? "(adapter default)";
+      await interaction.reply({ content: `📊 Session output mode: **${current}**`, ephemeral: true });
+    }
     return;
   }
 
-  await adapter.core.configManager.save(
-    { channels: { discord: { displayVerbosity: level } } },
-    "channels.discord.displayVerbosity",
-  );
-
-  await interaction.editReply(
-    `${VERBOSITY_LABELS[level]} Display verbosity set to **${level}**.`,
-  );
+  if (level === "reset") {
+    await core.configManager.save({ channels: { discord: { outputMode: undefined } } } as any, "channels.discord.outputMode");
+    await interaction.reply({ content: "🔄 Adapter output mode reset to global default.", ephemeral: true });
+  } else if (level === "low" || level === "medium" || level === "high") {
+    await core.configManager.save({ channels: { discord: { outputMode: level } } }, "channels.discord.outputMode");
+    await interaction.reply({ content: `${OUTPUT_MODE_LABELS[level]} Output mode set to **${level}**.`, ephemeral: true });
+  } else {
+    const current = (core.configManager.get().channels?.discord as any)?.outputMode ?? "medium";
+    await interaction.reply({
+      content: `📊 Current output mode: **${current}**\n\n` +
+        `\`/outputmode low|medium|high\` — Set adapter default\n` +
+        `\`/outputmode reset\` — Reset adapter to global default\n` +
+        `\`/outputmode session low|medium|high|reset\` — Override for this session\n\n` +
+        `• **low** — icons only\n• **medium** — title + description (default)\n• **high** — full detail`,
+      ephemeral: true,
+    });
+  }
 }
+
+/** @deprecated Use handleOutputMode instead */
+export const handleVerbosity = handleOutputMode;

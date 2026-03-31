@@ -150,6 +150,18 @@ function createDiscordPlugin(): OpenACPPlugin {
         return
       }
 
+      // Migrate displayVerbosity → outputMode (backward compat)
+      const core = ctx.core as OpenACPCore
+      const fullConfig = core.configManager.get() as Record<string, any>
+      const discordChannel = (fullConfig.channels?.discord ?? {}) as Record<string, unknown>
+      if (discordChannel.displayVerbosity && !discordChannel.outputMode) {
+        await core.configManager.save(
+          { channels: { discord: { outputMode: discordChannel.displayVerbosity } } },
+          'channels.discord.outputMode',
+        )
+        ctx.log.info('Migrated config channels.discord.displayVerbosity → outputMode')
+      }
+
       const { DiscordAdapter } = await import('./adapter.js')
       // config is a Record<string, unknown> from pluginConfig; at runtime it
       // contains all DiscordChannelConfig fields populated from the migrated config.

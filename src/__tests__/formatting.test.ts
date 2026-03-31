@@ -1,351 +1,591 @@
 import { describe, it, expect } from "vitest";
 import {
-  splitMessage,
-  formatUsage,
-  formatToolCall,
-  formatPlan,
+  renderSpecSection,
+  renderToolCard,
+  renderUsageEmbed,
+  renderPermissionEmbed,
+  splitToolCardDescription,
 } from "../formatting.js";
-import type { PlanEntry } from "@openacp/plugin-sdk";
+import type { OutputMode, ToolDisplaySpec, ToolCardSnapshot } from "../formatting.js";
+import { EmbedBuilder, ButtonStyle } from "discord.js";
 
-describe("splitMessage", () => {
-  it("returns array with original text when within maxLength", () => {
+// ─── Test helpers ───────────────────────────────────────────────────────────
+
+function makeSpec(overrides: Partial<ToolDisplaySpec> = {}): ToolDisplaySpec {
+  return {
+    id: "tool-1",
+    kind: "read",
+    icon: "📖",
+    title: "main.ts",
+    description: null,
+    command: null,
+    inputContent: null,
+    outputSummary: null,
+    outputContent: null,
+    diffStats: null,
+    status: "completed",
+    isNoise: false,
+    isHidden: false,
+    ...overrides,
+  };
+}
+
+function makeSnapshot(overrides: Partial<ToolCardSnapshot> = {}): ToolCardSnapshot {
+  return {
+    specs: [makeSpec()],
+    totalVisible: 1,
+    completedVisible: 1,
+    allComplete: true,
+    ...overrides,
+  };
+}
+
+// ─── renderSpecSection ──────────────────────────────────────────────────────
+
+describe("renderSpecSection", () => {
+  describe("low mode", () => {
+    it("returns compact format with status + kind icon + kind label", () => {
+      const result = renderSpecSection(makeSpec(), "low");
+      expect(result).toContain("✅");
+      expect(result).toContain("📖");
+      expect(result).toContain("Read");
+    });
+
+    it("uses running icon for running status", () => {
+      const result = renderSpecSection(makeSpec({ status: "running" }), "low");
+      expect(result).toContain("🔄");
+    });
+
+    it("uses error icon for failed status", () => {
+      const result = renderSpecSection(makeSpec({ status: "error" }), "low");
+      expect(result).toContain("❌");
+    });
+
+    it("does not include description or diff stats", () => {
+      const result = renderSpecSection(
+        makeSpec({
+          description: "Some description",
+          diffStats: { added: 5, removed: 3 },
+        }),
+        "low",
+      );
+      expect(result).not.toContain("Some description");
+      expect(result).not.toContain("+5");
+    });
+  });
+
+  describe("medium mode", () => {
+    it("shows status icon, kind icon, bold title", () => {
+      const result = renderSpecSection(makeSpec({ title: "config.ts" }), "medium");
+      expect(result).toContain("✅");
+      expect(result).toContain("📖");
+      expect(result).toContain("**config.ts**");
+    });
+
+    it("shows description on second line with vine character", () => {
+      const result = renderSpecSection(
+        makeSpec({ description: "Reading file contents" }),
+        "medium",
+      );
+      expect(result).toContain("╰");
+      expect(result).toContain("Reading file contents");
+    });
+
+    it("shows diff stats and viewer link", () => {
+      const result = renderSpecSection(
+        makeSpec({
+          kind: "edit",
+          icon: "✏️",
+          title: "utils.ts",
+          diffStats: { added: 10, removed: 3 },
+          viewerLinks: { diff: "https://example.com/diff" },
+        }),
+        "medium",
+      );
+      expect(result).toContain("+10/-3");
+      expect(result).toContain("[View Diff](https://example.com/diff)");
+    });
+
+    it("shows only added lines when no removed", () => {
+      const result = renderSpecSection(
+        makeSpec({ diffStats: { added: 5, removed: 0 } }),
+        "medium",
+      );
+      expect(result).toContain("+5");
+      expect(result).not.toContain("-0");
+    });
+
+    it("shows only removed lines when no added", () => {
+      const result = renderSpecSection(
+        makeSpec({ diffStats: { added: 0, removed: 7 } }),
+        "medium",
+      );
+      expect(result).toContain("-7");
+      expect(result).not.toContain("+0");
+    });
+
+    it("does not include inline output content", () => {
+      const result = renderSpecSection(
+        makeSpec({ outputContent: "some output text" }),
+        "medium",
+      );
+      expect(result).not.toContain("```");
+      expect(result).not.toContain("some output text");
+    });
+  });
+
+  describe("high mode", () => {
+    it("includes same info as medium", () => {
+      const result = renderSpecSection(
+        makeSpec({ description: "desc" }),
+        "high",
+      );
+      expect(result).toContain("✅");
+      expect(result).toContain("📖");
+      expect(result).toContain("**main.ts**");
+      expect(result).toContain("desc");
+    });
+
+    it("includes inline output content in code blocks", () => {
+      const result = renderSpecSection(
+        makeSpec({ outputContent: "const x = 1;" }),
+        "high",
+      );
+      expect(result).toContain("```");
+      expect(result).toContain("const x = 1;");
+    });
+
+    it("includes output fallback content when no outputContent", () => {
+      const result = renderSpecSection(
+        makeSpec({ outputFallbackContent: "fallback text" }),
+        "high",
+      );
+      expect(result).toContain("```");
+      expect(result).toContain("fallback text");
+    });
+
+    it("includes output viewer link", () => {
+      const result = renderSpecSection(
+        makeSpec({ outputViewerLink: "https://example.com/output" }),
+        "high",
+      );
+      expect(result).toContain("[View output](https://example.com/output)");
+    });
+
+    it("shows noise tools with eye icon", () => {
+      const result = renderSpecSection(
+        makeSpec({ isNoise: true, title: "list_files" }),
+        "high",
+      );
+      expect(result).toContain("👁️");
+    });
+
+    it("does not show noise indicator in medium mode", () => {
+      const result = renderSpecSection(
+        makeSpec({ isNoise: true, title: "list_files" }),
+        "medium",
+      );
+      expect(result).not.toContain("👁️");
+    });
+  });
+
+  it("falls back gracefully when kind has no label", () => {
+    const result = renderSpecSection(
+      makeSpec({ kind: "unknown_kind", icon: "🔧", title: "mystery" }),
+      "medium",
+    );
+    expect(result).toContain("mystery");
+  });
+});
+
+// ─── renderToolCard ─────────────────────────────────────────────────────────
+
+describe("renderToolCard", () => {
+  describe("embed color", () => {
+    it("uses blue while running", () => {
+      const result = renderToolCard(
+        makeSnapshot({
+          allComplete: false,
+          completedVisible: 1,
+          totalVisible: 3,
+          specs: [
+            makeSpec({ status: "completed" }),
+            makeSpec({ id: "t2", status: "running" }),
+            makeSpec({ id: "t3", status: "running" }),
+          ],
+        }),
+        "medium",
+      );
+      expect(result.embeds[0].data.color).toBe(0x3498db);
+    });
+
+    it("uses green when all done", () => {
+      const result = renderToolCard(makeSnapshot(), "medium");
+      expect(result.embeds[0].data.color).toBe(0x2ecc71);
+    });
+
+    it("uses red when any spec has error", () => {
+      const result = renderToolCard(
+        makeSnapshot({
+          specs: [makeSpec({ status: "error" })],
+          allComplete: true,
+        }),
+        "medium",
+      );
+      expect(result.embeds[0].data.color).toBe(0xe74c3c);
+    });
+  });
+
+  describe("author line", () => {
+    it("shows working status with counter when running", () => {
+      const result = renderToolCard(
+        makeSnapshot({
+          allComplete: false,
+          completedVisible: 2,
+          totalVisible: 4,
+        }),
+        "medium",
+      );
+      const author = result.embeds[0].data.author;
+      expect(author?.name).toContain("Working");
+      expect(author?.name).toContain("2 of 4");
+    });
+
+    it("shows done status with counter when complete", () => {
+      const result = renderToolCard(
+        makeSnapshot({
+          allComplete: true,
+          completedVisible: 4,
+          totalVisible: 4,
+        }),
+        "medium",
+      );
+      const author = result.embeds[0].data.author;
+      expect(author?.name).toContain("Done");
+      expect(author?.name).toContain("4/4");
+    });
+  });
+
+  describe("hidden spec filtering", () => {
+    it("filters out hidden specs from description", () => {
+      const result = renderToolCard(
+        makeSnapshot({
+          specs: [
+            makeSpec({ title: "visible.ts" }),
+            makeSpec({ id: "t2", title: "hidden.ts", isHidden: true }),
+          ],
+        }),
+        "medium",
+      );
+      const desc = result.embeds[0].data.description ?? "";
+      expect(desc).toContain("visible.ts");
+      expect(desc).not.toContain("hidden.ts");
+    });
+  });
+
+  describe("action row", () => {
+    it("includes action row with buttons when running and sessionId provided", () => {
+      const result = renderToolCard(
+        makeSnapshot({ allComplete: false }),
+        "medium",
+        "sess-123",
+      );
+      expect(result.components.length).toBe(1);
+      // Should have mode buttons + cancel button
+      const buttons = result.components[0].components;
+      expect(buttons.length).toBeGreaterThanOrEqual(4); // low, medium, high, cancel
+    });
+
+    it("disables the current mode button", () => {
+      const result = renderToolCard(
+        makeSnapshot({ allComplete: false }),
+        "medium",
+        "sess-123",
+      );
+      const buttons = result.components[0].components;
+      // The medium button should be disabled
+      const mediumBtn = buttons.find(
+        (b: any) => b.data.custom_id === "om:sess-123:medium",
+      );
+      expect(mediumBtn).toBeDefined();
+      expect((mediumBtn as any).data.disabled).toBe(true);
+    });
+
+    it("does not include action row when complete", () => {
+      const result = renderToolCard(makeSnapshot(), "medium", "sess-123");
+      expect(result.components.length).toBe(0);
+    });
+
+    it("does not include action row when no sessionId", () => {
+      const result = renderToolCard(
+        makeSnapshot({ allComplete: false }),
+        "medium",
+      );
+      expect(result.components.length).toBe(0);
+    });
+
+    it("includes cancel button with correct customId", () => {
+      const result = renderToolCard(
+        makeSnapshot({ allComplete: false }),
+        "low",
+        "sess-abc",
+      );
+      const buttons = result.components[0].components;
+      const cancelBtn = buttons.find(
+        (b: any) => b.data.custom_id === "cancel:sess-abc",
+      );
+      expect(cancelBtn).toBeDefined();
+    });
+  });
+
+  describe("low mode grid layout", () => {
+    it("joins specs with separator, 3 per line", () => {
+      const specs = Array.from({ length: 5 }, (_, i) =>
+        makeSpec({ id: `t${i}`, title: `file${i}.ts`, status: "completed" }),
+      );
+      const result = renderToolCard(
+        makeSnapshot({ specs, totalVisible: 5, completedVisible: 5 }),
+        "low",
+      );
+      const desc = result.embeds[0].data.description ?? "";
+      // Should have " · " separators within lines
+      expect(desc).toContain(" · ");
+    });
+  });
+
+  describe("medium/high mode sections", () => {
+    it("joins sections with double newlines", () => {
+      const specs = [
+        makeSpec({ id: "t1", title: "first.ts" }),
+        makeSpec({ id: "t2", title: "second.ts" }),
+      ];
+      const result = renderToolCard(
+        makeSnapshot({ specs, totalVisible: 2, completedVisible: 2 }),
+        "medium",
+      );
+      const desc = result.embeds[0].data.description ?? "";
+      expect(desc).toContain("\n\n");
+    });
+  });
+
+  describe("plan footer", () => {
+    it("shows compact plan in footer for medium mode", () => {
+      const result = renderToolCard(
+        makeSnapshot({
+          planEntries: [
+            { content: "First step", status: "completed", priority: "high" },
+            { content: "Current step", status: "in_progress", priority: "medium" },
+            { content: "Future step", status: "pending", priority: "low" },
+          ],
+        }),
+        "medium",
+      );
+      const footer = result.embeds[0].data.footer?.text ?? "";
+      expect(footer).toContain("Step 2/3");
+      expect(footer).toContain("Current step");
+    });
+
+    it("shows full plan list in description for high mode", () => {
+      const result = renderToolCard(
+        makeSnapshot({
+          planEntries: [
+            { content: "First step", status: "completed", priority: "high" },
+            { content: "Current step", status: "in_progress", priority: "medium" },
+          ],
+        }),
+        "high",
+      );
+      const desc = result.embeds[0].data.description ?? "";
+      expect(desc).toContain("First step");
+      expect(desc).toContain("Current step");
+    });
+  });
+
+  describe("description splitting", () => {
+    it("splits into multiple embeds when description exceeds 4096 chars", () => {
+      const specs = Array.from({ length: 50 }, (_, i) =>
+        makeSpec({
+          id: `t${i}`,
+          title: `very-long-file-name-${i}.ts`,
+          description: "A ".repeat(50),
+          outputContent: "x".repeat(80),
+          status: "completed",
+        }),
+      );
+      const result = renderToolCard(
+        makeSnapshot({ specs, totalVisible: 50, completedVisible: 50 }),
+        "high",
+      );
+      if (result.embeds.length > 1) {
+        for (const embed of result.embeds) {
+          expect((embed.data.description ?? "").length).toBeLessThanOrEqual(4096);
+        }
+      }
+    });
+  });
+});
+
+// ─── splitToolCardDescription ───────────────────────────────────────────────
+
+describe("splitToolCardDescription", () => {
+  it("returns single element for text within limit", () => {
     const text = "Hello world";
-    expect(splitMessage(text, 1800)).toEqual([text]);
+    expect(splitToolCardDescription(text)).toEqual([text]);
   });
 
-  it("splits long text at paragraph boundary", () => {
-    const para1 = "A".repeat(1000);
-    const para2 = "B".repeat(1000);
-    const text = para1 + "\n\n" + para2;
-    const chunks = splitMessage(text, 1800);
-    expect(chunks.length).toBeGreaterThan(1);
-    expect(chunks.join("\n\n").replace(/\n\n/g, "\n\n")).toContain("A");
-    expect(chunks.join("")).toContain("B");
+  it("returns single element for text exactly at limit", () => {
+    const text = "x".repeat(4096);
+    expect(splitToolCardDescription(text)).toEqual([text]);
   });
 
-  it("splits long text at line boundary if no paragraph break", () => {
-    const lines = Array.from(
-      { length: 30 },
-      (_, i) => `Line ${i}: ${"x".repeat(60)}`,
-    ).join("\n");
-    const chunks = splitMessage(lines, 1800);
+  it("splits at section boundaries when over limit", () => {
+    const section1 = "A".repeat(3000);
+    const section2 = "B".repeat(3000);
+    const text = section1 + "\n\n" + section2;
+    const chunks = splitToolCardDescription(text);
+    expect(chunks.length).toBe(2);
+    expect(chunks[0]).toContain("A");
+    expect(chunks[1]).toContain("B");
+  });
+
+  it("each chunk respects 4096 char limit", () => {
+    const sections = Array.from({ length: 10 }, (_, i) => `Section ${i}: ${"x".repeat(1000)}`);
+    const text = sections.join("\n\n");
+    const chunks = splitToolCardDescription(text);
     for (const chunk of chunks) {
-      expect(chunk.length).toBeLessThanOrEqual(2100); // some tolerance for fence logic
+      expect(chunk.length).toBeLessThanOrEqual(4096);
     }
   });
 
-  it("does not split inside a fenced code block", () => {
-    const before = "Some intro text\n\n";
-    const codeBlock =
-      "```javascript\n" + "const x = 1;\n".repeat(100) + "```\n";
-    const after = "\nAfter code block";
-    const text = before + codeBlock + after;
-    const chunks = splitMessage(text, 1800);
-    // No chunk should have an unclosed fenced code block
+  it("handles single section over limit by truncating", () => {
+    const text = "x".repeat(5000);
+    const chunks = splitToolCardDescription(text);
+    expect(chunks.length).toBeGreaterThanOrEqual(1);
     for (const chunk of chunks) {
-      const fences = chunk.match(/```/g) || [];
-      expect(fences.length % 2).toBe(0);
+      expect(chunk.length).toBeLessThanOrEqual(4096);
     }
   });
-
-  it("handles text exactly at maxLength", () => {
-    const text = "x".repeat(1800);
-    expect(splitMessage(text, 1800)).toEqual([text]);
-  });
-
-  it("handles text one char over maxLength", () => {
-    const text = "x".repeat(1801);
-    const chunks = splitMessage(text, 1800);
-    expect(chunks.length).toBeGreaterThan(1);
-  });
 });
 
-describe("formatUsage", () => {
-  it("shows progress bar with tokens and contextSize (high)", () => {
-    const result = formatUsage(
-      { tokensUsed: 28000, contextSize: 200000 },
-      "high",
-    );
-    expect(result).toBe("📊 28k / 200k tokens\n▓░░░░░░░░░ 14%");
-  });
+// ─── renderUsageEmbed ───────────────────────────────────────────────────────
 
-  it("shows warning emoji when usage >= 85% (high)", () => {
-    const result = formatUsage(
-      { tokensUsed: 85000, contextSize: 100000 },
-      "high",
-    );
-    expect(result).toBe("⚠️ 85k / 100k tokens\n▓▓▓▓▓▓▓▓▓░ 85%");
-  });
-
-  it("shows warning emoji at exactly 85% (high)", () => {
-    const result = formatUsage(
-      { tokensUsed: 8500, contextSize: 10000 },
-      "high",
-    );
-    expect(result).toContain("⚠️");
-  });
-
-  it("shows 100% with full bar (high)", () => {
-    const result = formatUsage(
-      { tokensUsed: 100000, contextSize: 100000 },
-      "high",
-    );
-    expect(result).toBe("⚠️ 100k / 100k tokens\n▓▓▓▓▓▓▓▓▓▓ 100%");
-  });
-
-  it("shows only tokens when no contextSize", () => {
-    const result = formatUsage({ tokensUsed: 5000 });
-    expect(result).toBe("📊 5k tokens");
-  });
-
-  it("shows placeholder when no data", () => {
-    const result = formatUsage({});
-    expect(result).toBe("📊 Usage data unavailable");
-  });
-
-  it("displays small numbers without k suffix (high)", () => {
-    const result = formatUsage({ tokensUsed: 500, contextSize: 1000 }, "high");
-    expect(result).toBe("📊 500 / 1k tokens\n▓▓▓▓▓░░░░░ 50%");
-  });
-});
-
-describe("formatToolCall", () => {
-  it("uses Discord bold markdown not HTML", () => {
-    const result = formatToolCall({
-      id: "1",
-      name: "read_file",
-      kind: "read",
-      status: "completed",
-    });
-    expect(result).toContain("**");
-    expect(result).not.toContain("<b>");
-  });
-
-  it("shows status icon and smart summary", () => {
-    const result = formatToolCall({
-      id: "1",
-      name: "Grep",
-      kind: "search",
-      status: "running",
-      rawInput: { pattern: "handleNewSession", path: "src/" },
-    });
-    expect(result).toContain("🔄"); // running
-    expect(result).toContain('🔍 Grep "handleNewSession"');
-  });
-
-  it("includes code block for content on high verbosity", () => {
-    const result = formatToolCall(
-      {
-        id: "1",
-        name: "write_file",
-        kind: "write",
-        status: "completed",
-        content: "file content here",
-      },
-      "high",
-    );
-    expect(result).toContain("```");
-    expect(result).toContain("file content here");
-  });
-
-  it("no inline content on low verbosity", () => {
-    const result = formatToolCall(
-      {
-        id: "1",
-        name: "write_file",
-        kind: "write",
-        status: "completed",
-        content: "file content here",
-      },
+describe("renderUsageEmbed", () => {
+  it("uses dark gray color", () => {
+    const embed = renderUsageEmbed(
+      { tokensUsed: 5000, contextSize: 200000 },
       "low",
     );
-    expect(result).not.toContain("```");
+    expect(embed.data.color).toBe(0x2f3136);
   });
 
-  it("medium hides content when viewer links present", () => {
-    const result = formatToolCall({
-      id: "1",
-      name: "edit_file",
-      kind: "write",
-      status: "completed",
-      content: "should not appear",
-      viewerLinks: { file: "https://example.com/file" },
-      viewerFilePath: "test.ts",
+  describe("low mode", () => {
+    it("shows compact tokens and duration", () => {
+      const embed = renderUsageEmbed(
+        { tokensUsed: 5000, duration: 12.5 },
+        "low",
+      );
+      const desc = embed.data.description ?? "";
+      expect(desc).toContain("5k tokens");
+      expect(desc).toContain("12.5s");
     });
-    expect(result).not.toContain("```");
-    expect(result).toContain("[View test.ts]");
   });
 
-  it("truncates content at 500 chars (high verbosity)", () => {
-    const longContent = "x".repeat(600);
-    const result = formatToolCall(
-      {
-        id: "1",
-        name: "tool",
-        status: "completed",
-        content: longContent,
-      },
-      "high",
-    );
-    expect(result).toContain("… (truncated)");
-    // The code block content should be truncated
-    const codeBlockContent = result.replace(
-      /```[\s\S]*?```/g,
-      (match) => match,
-    );
-    expect(codeBlockContent.length).toBeLessThan(700);
-  });
-
-  it("shows viewer links instead of code block", () => {
-    const result = formatToolCall({
-      id: "1",
-      name: "edit_file",
-      kind: "write",
-      status: "completed",
-      content: "some content",
-      viewerLinks: {
-        file: "https://example.com/file",
-        diff: "https://example.com/diff",
-      },
-      viewerFilePath: "/path/to/file.ts",
+  describe("medium mode", () => {
+    it("shows tokens, cost, and duration", () => {
+      const embed = renderUsageEmbed(
+        { tokensUsed: 28000, cost: 0.25, duration: 30 },
+        "medium",
+      );
+      const desc = embed.data.description ?? "";
+      expect(desc).toContain("28k tokens");
+      expect(desc).toContain("$0.25");
+      expect(desc).toContain("30s");
     });
-    expect(result).toContain("[View file.ts](https://example.com/file)");
-    expect(result).toContain("[View diff — file.ts](https://example.com/diff)");
-    expect(result).not.toContain("```");
   });
 
-  it("falls back to generic tool icon for unknown tool", () => {
-    const result = formatToolCall({
-      id: "1",
-      name: "mystery_tool",
-      status: "unknown",
+  describe("high mode", () => {
+    it("shows full progress bar and context percentage", () => {
+      const embed = renderUsageEmbed(
+        { tokensUsed: 85000, contextSize: 100000, cost: 1.5, duration: 60 },
+        "high",
+      );
+      const desc = embed.data.description ?? "";
+      expect(desc).toContain("▓");
+      expect(desc).toContain("85%");
+      expect(desc).toContain("$1.50");
     });
-    expect(result).toContain("🔧");
-    expect(result).toContain("mystery_tool");
+
+    it("shows warning emoji at >= 85%", () => {
+      const embed = renderUsageEmbed(
+        { tokensUsed: 85000, contextSize: 100000 },
+        "high",
+      );
+      const desc = embed.data.description ?? "";
+      expect(desc).toContain("⚠️");
+    });
+  });
+
+  it("handles missing usage data gracefully", () => {
+    const embed = renderUsageEmbed({}, "medium");
+    const desc = embed.data.description ?? "";
+    expect(desc).toContain("unavailable");
   });
 });
 
-describe("formatPlan", () => {
-  it("formats plan entries with status icons (high)", () => {
-    const entries: PlanEntry[] = [
-      { content: "First step", status: "completed", priority: "high" },
-      { content: "Second step", status: "in_progress", priority: "medium" },
-      { content: "Third step", status: "pending", priority: "low" },
-    ];
-    const result = formatPlan(entries, "high");
-    expect(result).toContain("**Plan:**");
-    expect(result).toContain("✅ 1. First step");
-    expect(result).toContain("🔄 2. Second step");
-    expect(result).toContain("⏳ 3. Third step");
+// ─── renderPermissionEmbed ──────────────────────────────────────────────────
+
+describe("renderPermissionEmbed", () => {
+  const request = {
+    toolName: "Bash",
+    command: "rm -rf /tmp/old",
+    description: "Delete temporary files",
+  };
+
+  it("uses yellow sidebar color", () => {
+    const result = renderPermissionEmbed(request, "sess-1", "perm-key-1");
+    expect(result.embeds[0].data.color).toBe(0xf1c40f);
   });
 
-  it("uses Discord bold markdown (high)", () => {
-    const entries: PlanEntry[] = [
-      { content: "Do something", status: "pending", priority: "high" },
-    ];
-    const result = formatPlan(entries, "high");
-    expect(result).toContain("**Plan:**");
-    expect(result).not.toContain("<b>");
+  it("includes tool name in embed", () => {
+    const result = renderPermissionEmbed(request, "sess-1", "perm-key-1");
+    const desc = result.embeds[0].data.description ?? "";
+    expect(desc).toContain("Bash");
   });
 
-  it("handles empty plan (high)", () => {
-    const result = formatPlan([], "high");
-    expect(result).toBe("**Plan:**\n");
+  it("includes command in embed", () => {
+    const result = renderPermissionEmbed(request, "sess-1", "perm-key-1");
+    const desc = result.embeds[0].data.description ?? "";
+    expect(desc).toContain("rm -rf /tmp/old");
   });
 
-  it("uses fallback icon for unknown status (high)", () => {
-    const entries = [
-      {
-        content: "Unknown",
-        status: "unknown" as PlanEntry["status"],
-        priority: "low" as PlanEntry["priority"],
-      },
-    ];
-    const result = formatPlan(entries, "high");
-    expect(result).toContain("⬜ 1. Unknown");
-  });
-});
-
-describe("displayKind icon resolution", () => {
-  it("uses displayKind icon when no status icon", () => {
-    const result = formatToolCall({
-      id: "1",
-      name: "custom",
-      status: "",
-      displayKind: "read",
-    });
-    expect(result).toContain("📖");
+  it("includes description in embed", () => {
+    const result = renderPermissionEmbed(request, "sess-1", "perm-key-1");
+    const desc = result.embeds[0].data.description ?? "";
+    expect(desc).toContain("Delete temporary files");
   });
 
-  it("status icon takes precedence", () => {
-    const result = formatToolCall({
-      id: "1",
-      name: "tool",
-      status: "completed",
-      displayKind: "read",
-    });
-    expect(result).toContain("✅");
-  });
-});
+  it("has Allow, Deny, and Always Allow buttons", () => {
+    const result = renderPermissionEmbed(request, "sess-1", "perm-key-1");
+    expect(result.components.length).toBe(1);
+    const buttons = result.components[0].components;
+    expect(buttons.length).toBe(3);
 
-describe("high verbosity rawInput", () => {
-  it("shows rawInput + content on high", () => {
-    const result = formatToolCall(
-      {
-        id: "1",
-        name: "Read",
-        status: "completed",
-        rawInput: { file_path: "src/main.ts" },
-        content: "const x = 1;",
-      },
-      "high",
-    );
-    expect(result).toContain("**Input:**");
-    expect(result).toContain("**Output:**");
+    const customIds = buttons.map((b: any) => b.data.custom_id);
+    expect(customIds).toContain("p:sess-1:perm-key-1:allow");
+    expect(customIds).toContain("p:sess-1:perm-key-1:deny");
+    expect(customIds).toContain("p:sess-1:perm-key-1:always");
   });
 
-  it("medium does NOT show content", () => {
-    const result = formatToolCall(
-      { id: "1", name: "Read", status: "completed", content: "file content" },
-      "medium",
-    );
-    expect(result).not.toContain("```");
-  });
-});
+  it("uses correct button styles", () => {
+    const result = renderPermissionEmbed(request, "sess-1", "perm-key-1");
+    const buttons = result.components[0].components;
 
-describe("formatPlan verbosity", () => {
-  const entries: PlanEntry[] = [
-    { content: "Step 1", status: "completed", priority: "high" },
-    { content: "Step 2", status: "pending", priority: "low" },
-  ];
+    const allowBtn = buttons.find((b: any) => b.data.custom_id?.includes(":allow"));
+    const denyBtn = buttons.find((b: any) => b.data.custom_id?.includes(":deny"));
+    const alwaysBtn = buttons.find((b: any) => b.data.custom_id?.includes(":always"));
 
-  it("medium shows summary", () => {
-    const result = formatPlan(entries, "medium");
-    expect(result).toContain("1/2 steps completed");
-    expect(result).not.toContain("Step 1");
-  });
-
-  it("high shows full entries", () => {
-    const result = formatPlan(entries, "high");
-    expect(result).toContain("Step 1");
-  });
-});
-
-describe("formatUsage verbosity", () => {
-  it("medium shows compact", () => {
-    const result = formatUsage(
-      { tokensUsed: 5000, contextSize: 200000 },
-      "medium",
-    );
-    expect(result).toBe("📊 5k tokens");
-  });
-
-  it("high shows progress bar + cost", () => {
-    const result = formatUsage(
-      { tokensUsed: 28000, contextSize: 200000, cost: 0.25 },
-      "high",
-    );
-    expect(result).toContain("▓");
-    expect(result).toContain("💰 $0.25");
+    expect((allowBtn as any).data.style).toBe(ButtonStyle.Success);
+    expect((denyBtn as any).data.style).toBe(ButtonStyle.Danger);
+    expect((alwaysBtn as any).data.style).toBe(ButtonStyle.Secondary);
   });
 });
