@@ -25,7 +25,7 @@
     "nanoid": "^5.1.7"
   },
   "devDependencies": {
-    "@openacp/plugin-sdk": "^2026.327.3",
+    "@openacp/plugin-sdk": "^2026.331.1",
     "typescript": "^5.4.0",
     "vitest": "^3.0.0"
   },
