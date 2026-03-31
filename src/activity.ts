@@ -1,250 +1,767 @@
 import type { TextChannel, ThreadChannel, Message } from "discord.js";
-import { EmbedBuilder } from "discord.js";
-import type { PlanEntry, DisplayVerbosity, SendQueue } from "@openacp/plugin-sdk";
-import { log } from "@openacp/plugin-sdk";
-import { formatUsage, formatPlan } from "./formatting.js";
+import {
+  renderToolCard,
+  type OutputMode,
+  type ToolDisplaySpec,
+  type ToolCardSnapshot,
+  type PlanEntry,
+} from "./formatting.js";
 
-// ─── ThinkingIndicator ────────────────────────────────────────────────────────
+// ─── Types ───────────────────────────────────────────────────────────────────
 
-const TYPING_REFRESH_MS = 8_000;
+export type { OutputMode, ToolDisplaySpec, ToolCardSnapshot, PlanEntry };
 
-export class ThinkingIndicator {
-  private dismissed = false;
-  private refreshTimer?: ReturnType<typeof setInterval>;
+export interface ToolCallMeta {
+  id: string;
+  name: string;
+  kind?: string;
+  status?: string;
+  content?: unknown;
+  rawInput?: unknown;
+  viewerLinks?: ViewerLinks;
+  viewerFilePath?: string;
+  displaySummary?: string;
+  displayTitle?: string;
+  displayKind?: string;
+}
 
-  constructor(private channel: TextChannel | ThreadChannel) {}
+export interface ViewerLinks {
+  file?: string;
+  diff?: string;
+}
 
-  async show(): Promise<void> {
-    if (this.dismissed) return;
-    try {
-      await this.channel.sendTyping();
-      this.startRefreshTimer();
-    } catch (err) {
-      log.warn({ err }, "[ThinkingIndicator] sendTyping() failed");
+export interface TunnelServiceInterface {
+  getPublicUrl(): string | null;
+  outputUrl(id: string): string;
+  getStore(): {
+    storeOutput(sessionId: string, label: string, content: string): string | null;
+  };
+}
+
+/** Minimal SendQueue interface — the real one comes from @openacp/plugin-sdk */
+export interface SendQueue {
+  enqueue<T>(fn: () => Promise<T>, opts?: { type?: string }): Promise<T | undefined>;
+}
+
+// ─── ToolEntry ───────────────────────────────────────────────────────────────
+
+export interface ToolEntry {
+  id: string;
+  name: string;
+  kind: string;
+  rawInput: unknown;
+  content: string | null;
+  status: string;
+  viewerLinks?: ViewerLinks;
+  diffStats?: { added: number; removed: number };
+  displaySummary?: string;
+  displayTitle?: string;
+  displayKind?: string;
+  isNoise: boolean;
+}
+
+// ─── ToolStateMap ────────────────────────────────────────────────────────────
+
+interface PendingUpdate {
+  status: string;
+  rawInput?: unknown;
+  content?: string | null;
+  viewerLinks?: ViewerLinks;
+  diffStats?: { added: number; removed: number };
+}
+
+export class ToolStateMap {
+  private entries: Map<string, ToolEntry> = new Map();
+  private pendingUpdates: Map<string, PendingUpdate> = new Map();
+
+  upsert(meta: ToolCallMeta, kind: string, rawInput: unknown): ToolEntry {
+    const isNoise = evaluateNoise(meta.name, kind, rawInput);
+
+    const entry: ToolEntry = {
+      id: meta.id,
+      name: meta.name,
+      kind,
+      rawInput,
+      content: null,
+      status: meta.status ?? "running",
+      viewerLinks: meta.viewerLinks,
+      displaySummary: meta.displaySummary,
+      displayTitle: meta.displayTitle,
+      displayKind: meta.displayKind,
+      isNoise,
+    };
+
+    this.entries.set(meta.id, entry);
+
+    const pending = this.pendingUpdates.get(meta.id);
+    if (pending) {
+      this.pendingUpdates.delete(meta.id);
+      applyUpdate(entry, pending);
     }
+
+    return entry;
   }
 
-  dismiss(): void {
-    this.dismissed = true;
-    this.stopRefreshTimer();
+  merge(
+    id: string,
+    status: string,
+    rawInput?: unknown,
+    content?: string | null,
+    viewerLinks?: ViewerLinks,
+    diffStats?: { added: number; removed: number },
+  ): ToolEntry | undefined {
+    const entry = this.entries.get(id);
+
+    if (!entry) {
+      this.pendingUpdates.set(id, { status, rawInput, content, viewerLinks, diffStats });
+      return undefined;
+    }
+
+    applyUpdate(entry, { status, rawInput, content, viewerLinks, diffStats });
+    return entry;
+  }
+
+  get(id: string): ToolEntry | undefined {
+    return this.entries.get(id);
+  }
+
+  clear(): void {
+    this.entries.clear();
+    this.pendingUpdates.clear();
+  }
+}
+
+function applyUpdate(entry: ToolEntry, update: PendingUpdate): void {
+  entry.status = update.status;
+  if (update.rawInput !== undefined) entry.rawInput = update.rawInput;
+  if (update.content !== undefined) entry.content = update.content ?? null;
+  if (update.viewerLinks !== undefined) entry.viewerLinks = update.viewerLinks;
+  if (update.diffStats !== undefined) entry.diffStats = update.diffStats;
+}
+
+/** Simple noise evaluation — noise tools are hidden in low/medium modes */
+function evaluateNoise(name: string, kind: string, _rawInput: unknown): boolean {
+  const lower = name.toLowerCase();
+  // TodoRead/TodoWrite, ToolResult with no content, etc. are considered noise
+  if (lower.includes("todo")) return true;
+  if (lower === "toolresult") return true;
+  return false;
+}
+
+// ─── ThoughtBuffer ───────────────────────────────────────────────────────────
+
+export class ThoughtBuffer {
+  private chunks: string[] = [];
+  private sealed = false;
+
+  append(chunk: string): void {
+    if (this.sealed) return;
+    this.chunks.push(chunk);
+  }
+
+  seal(): string {
+    this.sealed = true;
+    return this.chunks.join("");
+  }
+
+  getText(): string {
+    return this.chunks.join("");
+  }
+
+  isSealed(): boolean {
+    return this.sealed;
   }
 
   reset(): void {
-    this.dismissed = false;
-  }
-
-  private startRefreshTimer(): void {
-    this.stopRefreshTimer();
-    this.refreshTimer = setInterval(() => {
-      if (this.dismissed) {
-        this.stopRefreshTimer();
-        return;
-      }
-      this.channel.sendTyping().catch(() => {});
-    }, TYPING_REFRESH_MS);
-  }
-
-  private stopRefreshTimer(): void {
-    if (this.refreshTimer) {
-      clearInterval(this.refreshTimer);
-      this.refreshTimer = undefined;
-    }
+    this.chunks = [];
+    this.sealed = false;
   }
 }
 
-// ─── UsageMessage ─────────────────────────────────────────────────────────────
+// ─── DisplaySpecBuilder ──────────────────────────────────────────────────────
 
-export class UsageMessage {
-  private message?: Message;
+const KIND_ICONS: Record<string, string> = {
+  read: "📖",
+  edit: "✏️",
+  write: "✏️",
+  delete: "🗑️",
+  execute: "▶️",
+  command: "▶️",
+  bash: "▶️",
+  terminal: "▶️",
+  search: "🔍",
+  web: "🌐",
+  fetch: "🌐",
+  agent: "🧠",
+  think: "🧠",
+  install: "📦",
+  move: "📦",
+  other: "🛠️",
+};
 
-  constructor(
-    private thread: TextChannel | ThreadChannel,
-    private sendQueue: SendQueue,
-  ) {}
+const EXECUTE_KINDS = new Set(["execute", "bash", "command", "terminal"]);
+const INLINE_MAX_LINES = 15;
+const INLINE_MAX_CHARS = 800;
 
-  async send(
-    usage: { tokensUsed?: number; contextSize?: number; cost?: number },
-    verbosity: DisplayVerbosity = "medium",
-  ): Promise<void> {
-    const text = formatUsage(usage, verbosity);
-    const embed = new EmbedBuilder().setDescription(text);
-    try {
-      if (this.message) {
-        await this.sendQueue.enqueue(
-          () => this.message!.edit({ embeds: [embed] }),
-          { type: "other" },
-        );
-      } else {
-        const result = await this.sendQueue.enqueue(
-          () => this.thread.send({ embeds: [embed] }),
-          { type: "other" },
-        );
-        if (result) this.message = result;
-      }
-    } catch (err) {
-      log.warn({ err }, "[UsageMessage] send() failed");
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function capitalize(s: string): string {
+  return s.length === 0 ? s : s[0].toUpperCase() + s.slice(1);
+}
+
+function buildTitle(entry: ToolEntry, kind: string): string {
+  if (entry.displayTitle) return entry.displayTitle;
+  if (entry.displaySummary) return entry.displaySummary;
+
+  const input = asRecord(entry.rawInput);
+
+  if (kind === "read") {
+    const filePath = typeof input.file_path === "string" ? input.file_path : null;
+    if (filePath) {
+      const startLine = typeof input.start_line === "number" ? input.start_line : null;
+      const endLine = typeof input.end_line === "number" ? input.end_line : null;
+      if (startLine !== null && endLine !== null) return `${filePath} (lines ${startLine}–${endLine})`;
+      if (startLine !== null) return `${filePath} (from line ${startLine})`;
+      const offset = typeof input.offset === "number" ? input.offset : null;
+      const limit = typeof input.limit === "number" ? input.limit : null;
+      if (offset !== null && limit !== null) return `${filePath} (lines ${offset}–${offset + limit - 1})`;
+      if (offset !== null) return `${filePath} (from line ${offset})`;
+      return filePath;
     }
+    return capitalize(entry.name);
   }
 
-  async delete(): Promise<void> {
-    if (!this.message) return;
-    const msg = this.message;
-    this.message = undefined;
-    try {
-      await this.sendQueue.enqueue(() => msg.delete(), { type: "other" });
-    } catch (err) {
-      log.warn({ err }, "[UsageMessage] delete() failed");
+  if (kind === "edit" || kind === "write" || kind === "delete") {
+    const filePath =
+      typeof input.file_path === "string"
+        ? input.file_path
+        : typeof input.path === "string"
+          ? input.path
+          : null;
+    if (filePath) return filePath;
+    return capitalize(entry.name);
+  }
+
+  if (EXECUTE_KINDS.has(kind)) {
+    const description = typeof input.description === "string" ? input.description : null;
+    if (description) return description;
+    const command = typeof input.command === "string" ? input.command : null;
+    if (command) return command.length > 60 ? command.slice(0, 57) + "..." : command;
+    return capitalize(entry.name);
+  }
+
+  if (kind === "agent") {
+    const skill = typeof input.skill === "string" ? input.skill : null;
+    const description = typeof input.description === "string" ? input.description : null;
+    const subtype = typeof input.subagent_type === "string" ? input.subagent_type : null;
+    if (skill) return skill;
+    if (description) return description.length > 60 ? description.slice(0, 57) + "..." : description;
+    if (subtype) return subtype;
+    return capitalize(entry.name);
+  }
+
+  if (kind === "search") {
+    const pattern =
+      typeof input.pattern === "string"
+        ? input.pattern
+        : typeof input.query === "string"
+          ? input.query
+          : null;
+    if (pattern) {
+      let title = `${capitalize(entry.name)} "${pattern}"`;
+      const glob = typeof input.glob === "string" ? input.glob : null;
+      const type = typeof input.type === "string" ? input.type : null;
+      if (glob) title += ` (glob: ${glob})`;
+      else if (type) title += ` (type: ${type})`;
+      return title;
     }
+    return capitalize(entry.name);
+  }
+
+  if (entry.name.toLowerCase() === "skill" && typeof input.skill === "string" && input.skill) {
+    return input.skill;
+  }
+
+  return entry.name;
+}
+
+function buildOutputSummary(content: string): string {
+  const lines = content.split("\n").length;
+  return `${lines} line${lines === 1 ? "" : "s"} of output`;
+}
+
+function isTitleFromCommand(title: string, command: string): boolean {
+  return title === command || (command.length > 60 && title === command.slice(0, 57) + "...");
+}
+
+export class DisplaySpecBuilder {
+  constructor(private tunnelService?: TunnelServiceInterface) {}
+
+  buildToolSpec(
+    entry: ToolEntry,
+    mode: OutputMode,
+    sessionContext?: { id: string; workingDirectory: string },
+  ): ToolDisplaySpec {
+    const effectiveKind = entry.displayKind ?? entry.kind;
+    const icon = KIND_ICONS[effectiveKind] ?? KIND_ICONS["other"] ?? "🛠️";
+    const title = buildTitle(entry, effectiveKind);
+    const isHidden = entry.isNoise && mode !== "high";
+
+    const includeMeta = mode !== "low";
+    const input = asRecord(entry.rawInput);
+
+    const rawDescription = typeof input.description === "string" ? input.description : null;
+    const descLower = rawDescription?.toLowerCase();
+    const description =
+      includeMeta && rawDescription && rawDescription !== title
+        && descLower !== effectiveKind && descLower !== entry.name.toLowerCase()
+        ? rawDescription : null;
+
+    const rawCommand =
+      EXECUTE_KINDS.has(effectiveKind) && typeof input.command === "string"
+        ? input.command
+        : null;
+    const command =
+      includeMeta && rawCommand && !isTitleFromCommand(title, rawCommand)
+        ? rawCommand
+        : null;
+
+    const inputContent: string | null = null;
+    const content = entry.content;
+
+    let outputSummary: string | null = null;
+    let outputContent: string | null = null;
+    let outputViewerLink: string | undefined = undefined;
+    let outputFallbackContent: string | undefined = undefined;
+
+    if (content && content.trim().length > 0 && includeMeta) {
+      outputSummary = buildOutputSummary(content);
+
+      const isLong =
+        content.split("\n").length > INLINE_MAX_LINES || content.length > INLINE_MAX_CHARS;
+
+      if (isLong) {
+        const publicUrl = this.tunnelService?.getPublicUrl();
+        const hasPublicTunnel = !!publicUrl && !publicUrl.startsWith("http://localhost") && !publicUrl.startsWith("http://127.0.0.1");
+        if (this.tunnelService && sessionContext && hasPublicTunnel) {
+          const label =
+            typeof input.command === "string" ? input.command : entry.name;
+          const id = this.tunnelService.getStore().storeOutput(sessionContext.id, label, content);
+          if (id !== null) {
+            outputViewerLink = this.tunnelService.outputUrl(id);
+          }
+        } else if (mode === "high") {
+          outputFallbackContent = content;
+        }
+      } else if (mode === "high") {
+        outputContent = content;
+      }
+    }
+
+    const diffStats = includeMeta ? (entry.diffStats ?? null) : null;
+
+    return {
+      id: entry.id,
+      kind: effectiveKind,
+      icon,
+      title,
+      description,
+      command,
+      inputContent,
+      outputSummary,
+      outputContent,
+      diffStats,
+      viewerLinks: entry.viewerLinks,
+      outputViewerLink,
+      outputFallbackContent,
+      status: entry.status,
+      isNoise: entry.isNoise,
+      isHidden,
+    };
   }
 }
 
-// ─── PlanCard ─────────────────────────────────────────────────────────────────
+// ─── ToolCardState ───────────────────────────────────────────────────────────
 
-const PLAN_DEBOUNCE_MS = 3_500;
+const DEBOUNCE_MS = 500;
+const DONE_STATUSES = new Set(["completed", "done", "failed", "error"]);
 
-export class PlanCard {
-  private message?: Message;
-  private flushPromise: Promise<void> = Promise.resolve();
-  private latestEntries?: PlanEntry[];
-  private lastSentText?: string;
-  private flushTimer?: ReturnType<typeof setTimeout>;
-  private verbosity: DisplayVerbosity = "medium";
+interface ToolCardStateConfig {
+  onFlush: (snapshot: ToolCardSnapshot) => void;
+}
 
-  constructor(
-    private thread: TextChannel | ThreadChannel,
-    private sendQueue: SendQueue,
-  ) {}
+export class ToolCardState {
+  private specs: ToolDisplaySpec[] = [];
+  private planEntries?: PlanEntry[];
+  private finalized = false;
+  private isFirstFlush = true;
+  private debounceTimer?: ReturnType<typeof setTimeout>;
+  private onFlush: (snapshot: ToolCardSnapshot) => void;
 
-  setVerbosity(v: DisplayVerbosity): void {
-    this.verbosity = v;
+  constructor(config: ToolCardStateConfig) {
+    this.onFlush = config.onFlush;
   }
 
-  update(entries: PlanEntry[]): void {
-    this.latestEntries = entries;
-    if (this.flushTimer) clearTimeout(this.flushTimer);
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = undefined;
-      this.flushPromise = this.flushPromise
-        .then(() => this._flush())
-        .catch(() => {});
-    }, PLAN_DEBOUNCE_MS);
-  }
-
-  async finalize(): Promise<void> {
-    if (!this.latestEntries) return;
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = undefined;
+  updateFromSpec(spec: ToolDisplaySpec): void {
+    const existingIdx = this.specs.findIndex((s) => s.id === spec.id);
+    if (existingIdx >= 0) {
+      this.specs[existingIdx] = spec;
+    } else {
+      this.specs.push(spec);
     }
-    await this.flushPromise;
-    this.flushPromise = this.flushPromise
-      .then(() => this._flush())
-      .catch(() => {});
-    await this.flushPromise;
+
+    if (this.finalized) {
+      this.onFlush(this.snapshot());
+      return;
+    }
+
+    if (this.isFirstFlush) {
+      this.isFirstFlush = false;
+      this.flush();
+    } else {
+      this.scheduleFlush();
+    }
+  }
+
+  updatePlan(entries: PlanEntry[]): void {
+    if (this.finalized) return;
+    this.planEntries = entries;
+
+    if (this.specs.length === 0 && this.isFirstFlush) {
+      this.isFirstFlush = false;
+      this.flush();
+    } else {
+      this.scheduleFlush();
+    }
+  }
+
+  finalize(): void {
+    if (this.finalized) return;
+    this.finalized = true;
+    this.clearDebounce();
+    this.flush();
   }
 
   destroy(): void {
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = undefined;
-    }
+    this.finalized = true;
+    this.clearDebounce();
   }
 
-  private async _flush(): Promise<void> {
-    if (!this.latestEntries) return;
-    const text = formatPlan(this.latestEntries, this.verbosity);
-    if (this.message && text === this.lastSentText) return;
-    this.lastSentText = text;
-    const embed = new EmbedBuilder().setDescription(text);
-    try {
-      if (this.message) {
-        await this.sendQueue.enqueue(
-          () => this.message!.edit({ embeds: [embed] }),
-          { type: "other" },
-        );
-      } else {
-        const result = await this.sendQueue.enqueue(
-          () => this.thread.send({ embeds: [embed] }),
-          { type: "other" },
-        );
-        if (result) this.message = result;
-      }
-    } catch (err) {
-      log.warn({ err }, "[PlanCard] flush failed");
+  hasContent(): boolean {
+    return this.specs.length > 0 || this.planEntries !== undefined;
+  }
+
+  private snapshot(): ToolCardSnapshot {
+    const visible = this.specs.filter((s) => !s.isHidden);
+    const completedVisible = visible.filter((s) => DONE_STATUSES.has(s.status)).length;
+    const allComplete = visible.length > 0 && completedVisible === visible.length;
+    return {
+      specs: this.specs,
+      planEntries: this.planEntries,
+      totalVisible: visible.length,
+      completedVisible,
+      allComplete,
+    };
+  }
+
+  private flush(): void {
+    this.clearDebounce();
+    this.onFlush(this.snapshot());
+  }
+
+  private scheduleFlush(): void {
+    this.clearDebounce();
+    this.debounceTimer = setTimeout(() => {
+      this.debounceTimer = undefined;
+      this.flush();
+    }, DEBOUNCE_MS);
+  }
+
+  private clearDebounce(): void {
+    if (this.debounceTimer) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = undefined;
     }
   }
 }
 
 // ─── ActivityTracker ──────────────────────────────────────────────────────────
 
+const TYPING_REFRESH_MS = 8_000;
+
 export class ActivityTracker {
-  private isFirstEvent = true;
-  private hasPlanCard = false;
-  private thinking: ThinkingIndicator;
-  private planCard: PlanCard;
-  private usage: UsageMessage;
+  private _outputMode: OutputMode;
+  private sessionId: string;
+  private channel: TextChannel | ThreadChannel;
+  private sendQueue: SendQueue;
+  private tunnelService?: TunnelServiceInterface;
+  private sessionContext?: { id: string; workingDirectory: string };
+
+  // Internal primitives
+  private toolStateMap: ToolStateMap;
+  private previousToolStateMap?: ToolStateMap;
+  private specBuilder: DisplaySpecBuilder;
+  private toolCard?: ToolCardState;
+  private previousToolCard?: ToolCardState;
+  private thoughtBuffer: ThoughtBuffer;
+  private toolCardMsg?: Message;
+  private previousToolCardMsg?: Message;
+
+  // Typing indicator state
+  private typingDismissed = false;
+  private typingRefreshTimer?: ReturnType<typeof setInterval>;
+
+  // Flush promise chain per card
+  private flushPromise: Promise<void> = Promise.resolve();
+  private previousFlushPromise: Promise<void> = Promise.resolve();
 
   constructor(
-    private thread: TextChannel | ThreadChannel,
-    private sendQueue: SendQueue,
+    channel: TextChannel | ThreadChannel,
+    sendQueue: SendQueue,
+    outputMode: OutputMode = "medium",
+    sessionId: string = "",
+    tunnelService?: TunnelServiceInterface,
+    sessionContext?: { id: string; workingDirectory: string },
   ) {
-    this.thinking = new ThinkingIndicator(thread);
-    this.planCard = new PlanCard(thread, sendQueue);
-    this.usage = new UsageMessage(thread, sendQueue);
+    this.channel = channel;
+    this.sendQueue = sendQueue;
+    this._outputMode = outputMode;
+    this.sessionId = sessionId;
+    this.tunnelService = tunnelService;
+    this.sessionContext = sessionContext;
+    this.specBuilder = new DisplaySpecBuilder(tunnelService);
+    this.toolStateMap = new ToolStateMap();
+    this.thoughtBuffer = new ThoughtBuffer();
+  }
+
+  setOutputMode(mode: OutputMode): void {
+    this._outputMode = mode;
   }
 
   async onNewPrompt(): Promise<void> {
-    this.isFirstEvent = true;
-    this.hasPlanCard = false;
-    this.thinking.dismiss();
-    this.thinking.reset();
+    this.thoughtBuffer.reset();
+    this.stopTyping();
+
+    // Finalize current card
+    if (this.toolCard) {
+      this.toolCard.finalize();
+      await this.flushPromise;
+    }
+
+    // Swap current → previous
+    this.previousToolCard = this.toolCard;
+    this.previousToolCardMsg = this.toolCardMsg;
+    this.previousToolStateMap = this.toolStateMap;
+    this.previousFlushPromise = this.flushPromise;
+
+    // Fresh state for new prompt
+    this.toolStateMap = new ToolStateMap();
+    this.toolCard = undefined;
+    this.toolCardMsg = undefined;
+    this.flushPromise = Promise.resolve();
   }
 
-  async onThought(): Promise<void> {
-    await this._firstEventGuard();
-    await this.thinking.show();
+  async onThought(text: string): Promise<void> {
+    if (!this.thoughtBuffer.isSealed()) {
+      this.thoughtBuffer.append(text);
+    }
+    this.typingDismissed = false;
+    await this.startTyping();
   }
 
   async onTextStart(): Promise<void> {
-    await this._firstEventGuard();
-    this.thinking.dismiss();
-  }
+    this.thoughtBuffer.seal();
+    this.stopTyping();
 
-  async onToolCall(): Promise<void> {
-    await this._firstEventGuard();
-    this.thinking.dismiss();
-    this.thinking.reset();
-  }
+    // Seal current tool card so new tools go to a new card
+    await this.sealToolCard();
 
-  async onPlan(
-    entries: PlanEntry[],
-    verbosity?: DisplayVerbosity,
-  ): Promise<void> {
-    await this._firstEventGuard();
-    this.thinking.dismiss();
-    this.hasPlanCard = true;
-    if (verbosity) this.planCard.setVerbosity(verbosity);
-    this.planCard.update(entries);
-  }
-
-  async sendUsage(
-    usage: { tokensUsed?: number; contextSize?: number; cost?: number },
-    verbosity: DisplayVerbosity = "medium",
-  ): Promise<void> {
-    await this.usage.send(usage, verbosity);
-  }
-
-  async cleanup(): Promise<void> {
-    this.thinking.dismiss();
-    this.planCard.destroy();
-    if (this.hasPlanCard) {
-      await this.planCard.finalize();
+    // In high mode with tunnel: store thought content via viewer
+    if (this._outputMode === "high" && this.tunnelService && this.sessionContext) {
+      const thoughtText = this.thoughtBuffer.getText();
+      if (thoughtText.trim().length > 0) {
+        const id = this.tunnelService.getStore().storeOutput(
+          this.sessionContext.id,
+          "thinking",
+          thoughtText,
+        );
+        // Could display viewer link — for now just stored
+        void id;
+      }
     }
   }
 
-  private async _firstEventGuard(): Promise<void> {
-    if (!this.isFirstEvent) return;
-    this.isFirstEvent = false;
-    await this.usage.delete();
+  async onToolCall(
+    meta: ToolCallMeta,
+    kind: string,
+    rawInput: unknown,
+  ): Promise<void> {
+    this.stopTyping();
+
+    const entry = this.toolStateMap.upsert(meta, kind, rawInput);
+    const spec = this.specBuilder.buildToolSpec(entry, this._outputMode, this.sessionContext);
+    this.ensureToolCard();
+    this.toolCard!.updateFromSpec(spec);
+  }
+
+  async onToolUpdate(
+    id: string,
+    status: string,
+    viewerLinks?: ViewerLinks,
+    viewerFilePath?: string,
+    content?: string | null,
+    rawInput?: unknown,
+    diffStats?: { added: number; removed: number },
+  ): Promise<void> {
+    // Try previous tool state map first for out-of-order updates
+    if (this.previousToolStateMap?.get(id)) {
+      this.previousToolStateMap.merge(id, status, rawInput, content, viewerLinks, diffStats);
+      const prevEntry = this.previousToolStateMap.get(id);
+      if (prevEntry && this.previousToolCard) {
+        const prevSpec = this.specBuilder.buildToolSpec(prevEntry, this._outputMode, this.sessionContext);
+        this.previousToolCard.updateFromSpec(prevSpec);
+      }
+    }
+
+    // Also try current map
+    const existed = !!this.toolStateMap.get(id);
+    const entry = this.toolStateMap.merge(id, status, rawInput, content, viewerLinks, diffStats);
+    if (!existed || !entry) return;
+
+    const spec = this.specBuilder.buildToolSpec(entry, this._outputMode, this.sessionContext);
+    this.toolCard?.updateFromSpec(spec);
+  }
+
+  async onPlan(entries: PlanEntry[]): Promise<void> {
+    this.stopTyping();
+    this.ensureToolCard();
+    this.toolCard!.updatePlan(entries);
+  }
+
+  async cleanup(): Promise<void> {
+    this.stopTyping();
+
+    if (this.toolCard) {
+      this.toolCard.finalize();
+      await this.flushPromise;
+    }
+
+    if (this.previousToolCard) {
+      this.previousToolCard.finalize();
+      await this.previousFlushPromise;
+    }
+  }
+
+  destroy(): void {
+    this.stopTyping();
+    this.toolCard?.destroy();
+    this.previousToolCard?.destroy();
+  }
+
+  // ─── Private helpers ─────────────────────────────────────────────────────
+
+  private ensureToolCard(): void {
+    if (this.toolCard && this.toolCard.hasContent()) {
+      // Already has a card with content — reuse it
+      return;
+    }
+    if (!this.toolCard) {
+      this.toolCard = new ToolCardState({
+        onFlush: (snapshot) => {
+          this.flushPromise = this.flushPromise
+            .then(() => this.flushToolCard(snapshot, false))
+            .catch(() => {});
+        },
+      });
+    }
+  }
+
+  private async sealToolCard(): Promise<void> {
+    if (!this.toolCard || !this.toolCard.hasContent()) return;
+
+    this.toolCard.finalize();
+    await this.flushPromise;
+
+    // Swap current → previous
+    this.previousToolCard = this.toolCard;
+    this.previousToolCardMsg = this.toolCardMsg;
+    this.previousToolStateMap = this.toolStateMap;
+    this.previousFlushPromise = this.flushPromise;
+
+    // Fresh state
+    this.toolStateMap = new ToolStateMap();
+    this.toolCard = undefined;
+    this.toolCardMsg = undefined;
+    this.flushPromise = Promise.resolve();
+  }
+
+  private async flushToolCard(
+    snapshot: ToolCardSnapshot,
+    isPrevious: boolean,
+  ): Promise<void> {
+    const { embeds, components } = renderToolCard(snapshot, this._outputMode, this.sessionId);
+
+    if (embeds.length === 0) return;
+
+    const msg = isPrevious ? this.previousToolCardMsg : this.toolCardMsg;
+
+    try {
+      if (msg) {
+        await this.sendQueue.enqueue(
+          () => msg.edit({ embeds, components }),
+          { type: "other" },
+        );
+      } else {
+        const result = await this.sendQueue.enqueue(
+          () => this.channel.send({ embeds, components }),
+          { type: "other" },
+        );
+        if (result) {
+          if (isPrevious) {
+            this.previousToolCardMsg = result as Message;
+          } else {
+            this.toolCardMsg = result as Message;
+          }
+        }
+      }
+    } catch {
+      // Swallow errors — Discord API failures shouldn't break the tracker
+    }
+  }
+
+  private async startTyping(): Promise<void> {
+    if (this.typingDismissed) return;
+    try {
+      await this.channel.sendTyping();
+    } catch {
+      // ignore
+    }
+
+    if (!this.typingRefreshTimer) {
+      this.typingRefreshTimer = setInterval(() => {
+        if (this.typingDismissed) {
+          this.stopTypingTimer();
+          return;
+        }
+        this.channel.sendTyping().catch(() => {});
+      }, TYPING_REFRESH_MS);
+    }
+  }
+
+  private stopTyping(): void {
+    this.typingDismissed = true;
+    this.stopTypingTimer();
+  }
+
+  private stopTypingTimer(): void {
+    if (this.typingRefreshTimer) {
+      clearInterval(this.typingRefreshTimer);
+      this.typingRefreshTimer = undefined;
+    }
   }
 }

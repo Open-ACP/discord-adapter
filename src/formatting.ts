@@ -268,6 +268,11 @@ export function renderToolCard(
     }
   }
 
+  // If description is empty (no visible specs, no plan text), return empty result
+  if (!description) {
+    return { embeds: [], components: [] };
+  }
+
   // Split description into multiple embeds if needed
   const descChunks = splitToolCardDescription(description);
   const embeds: EmbedBuilder[] = [];

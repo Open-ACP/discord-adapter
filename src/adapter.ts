@@ -666,7 +666,7 @@ export class DiscordAdapter extends MessagingAdapter {
     if (!this.sessionTrackers.has(sessionId)) {
       this.sessionTrackers.set(
         sessionId,
-        new ActivityTracker(thread, this.sendQueue),
+        new ActivityTracker(thread, this.sendQueue, "medium", sessionId),
       );
     }
     return this.sessionTrackers.get(sessionId)!;
@@ -715,10 +715,10 @@ export class DiscordAdapter extends MessagingAdapter {
 
   // ─── Handler overrides ─────────────────────────────────────────────────────
 
-  protected async handleThought(sessionId: string, _content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
+  protected async handleThought(sessionId: string, content: OutgoingMessage, _verbosity: DisplayVerbosity): Promise<void> {
     const { thread } = this.getSessionContext(sessionId);
     const tracker = this.getOrCreateTracker(sessionId, thread);
-    await tracker.onThought();
+    await tracker.onThought(content.text || "");
   }
 
   protected async handleText(sessionId: string, content: OutgoingMessage): Promise<void> {
@@ -736,7 +736,21 @@ export class DiscordAdapter extends MessagingAdapter {
     const toolName = String(meta.name ?? content.text ?? "Tool");
 
     const tracker = this.getOrCreateTracker(sessionId, thread);
-    await tracker.onToolCall();
+    const toolMeta = {
+      id: String(meta.id ?? ""),
+      name: toolName,
+      kind: meta.kind as string | undefined,
+      status: String(meta.status ?? "running"),
+      content: meta.content,
+      rawInput: meta.rawInput,
+      viewerLinks: meta.viewerLinks as { file?: string; diff?: string } | undefined,
+      viewerFilePath: meta.viewerFilePath as string | undefined,
+      displaySummary: meta.displaySummary as string | undefined,
+      displayTitle: meta.displayTitle as string | undefined,
+      displayKind: meta.displayKind as string | undefined,
+    };
+    const kind = (meta.kind as string) ?? "other";
+    await tracker.onToolCall(toolMeta, kind, meta.rawInput);
     await this.draftManager.finalize(
       sessionId,
       thread,
@@ -791,7 +805,7 @@ export class DiscordAdapter extends MessagingAdapter {
     const { thread } = this.getSessionContext(sessionId);
     const entries = (content.metadata?.entries ?? []) as PlanEntry[];
     const tracker = this.getOrCreateTracker(sessionId, thread);
-    await tracker.onPlan(entries, verbosity);
+    await tracker.onPlan(entries);
   }
 
   protected async handleUsage(sessionId: string, content: OutgoingMessage, verbosity: DisplayVerbosity): Promise<void> {
@@ -802,15 +816,24 @@ export class DiscordAdapter extends MessagingAdapter {
       isAssistant,
     );
     const meta = content.metadata ?? {};
-    const tracker = this.getOrCreateTracker(sessionId, thread);
-    await tracker.sendUsage(
-      {
-        tokensUsed: meta.tokensUsed as number | undefined,
-        contextSize: meta.contextSize as number | undefined,
-        cost: meta.cost as number | undefined,
-      },
-      verbosity,
-    );
+    // Usage is sent as a standalone embed (ActivityTracker no longer handles usage)
+    try {
+      const { renderUsageEmbed } = await import("./formatting.js");
+      const embed = renderUsageEmbed(
+        {
+          tokensUsed: meta.tokensUsed as number | undefined,
+          contextSize: meta.contextSize as number | undefined,
+          cost: meta.cost as number | undefined,
+        },
+        verbosity as "low" | "medium" | "high",
+      );
+      await this.sendQueue.enqueue(
+        () => thread.send({ embeds: [embed] }),
+        { type: "other" },
+      );
+    } catch {
+      /* best effort */
+    }
     // Send usage notification to notification channel
     try {
       const deepLink = buildDeepLink(this.guild.id, thread.id);
