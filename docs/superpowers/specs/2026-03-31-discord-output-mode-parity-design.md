@@ -8,7 +8,193 @@
 
 Bring the Discord adapter to full feature parity with the Telegram adapter's output mode system. This replaces the old `displayVerbosity` pass-through approach with the principled `OutputMode` system: 3-level cascade configuration (global → adapter → session), `DisplaySpecBuilder`, `ToolCardState` debounced aggregation, `ThoughtBuffer`, and out-of-order tool update handling.
 
-**Approach:** Rewrite Discord's activity tracking and formatting layer to use the shared `adapter-primitives` infrastructure — the same components Telegram uses — with Discord-specific rendering (embeds + markdown instead of HTML).
+**Approach:** Rewrite Discord's activity tracking and formatting layer to use the shared `adapter-primitives` infrastructure — the same components Telegram uses — with Discord-native rendering that leverages embeds, components, and Discord's visual language.
+
+## Discord UX Design
+
+### Design Principles
+
+1. **Top-to-bottom reading flow** — A Discord thread with an AI should read like a conversation: user message → agent activity → agent response → done. No jumping around.
+2. **Visual separation** — Agent "work" (tools, thinking) must be visually distinct from agent "speech" (text responses). Users should instantly tell what's happening vs. what the agent is saying.
+3. **Status at a glance** — Discord users scan fast. Color, icons, and compact layout tell the story without reading.
+4. **Progressive disclosure** — Show the right detail level. Non-dev users see results; power users see everything.
+5. **Native Discord patterns** — Use embeds, buttons, typing indicators, and ephemeral messages where Discord users expect them.
+
+### Reading Flow Per Prompt Cycle
+
+```
+┌─────────────────────────────────────────────────┐
+│ 👤 User message                                 │  ← plain message
+├─────────────────────────────────────────────────┤
+│ ⌨️ Bot is typing...                             │  ← native Discord typing indicator
+├─────────────────────────────────────────────────┤
+│ ┌─ 🔵 ───────────────────────────────────────┐  │
+│ │ 🤖 Working...                    2 of 4    │  │  ← embed, edited in place
+│ │                                             │  │
+│ │ ✅ 📖 **Read** `src/adapter.ts`            │  │
+│ │  ╰ Lines 1-80                               │  │
+│ │ ✅ ✏️ **Edit** `src/index.ts`              │  │
+│ │  ╰ +12/−3 · [View Diff]                    │  │
+│ │ 🔄 ▶️ **Run** `pnpm test`                 │  │
+│ │  ╰ Running tests...                         │  │
+│ │ ⏳ 🔍 **Search** `adapter pattern`         │  │
+│ │                                             │  │
+│ │ 📋 Step 2/5 — Refactor handlers            │  │
+│ └─────────────────────────────────────────────┘  │
+│  [🔇 Low] [📊 Medium] [🔍 High] [❌ Cancel]    │  ← action row buttons
+├─────────────────────────────────────────────────┤
+│ 🤖 Here's what I changed: the adapter now...    │  ← plain message (streamed)
+├─────────────────────────────────────────────────┤
+│ ┌─ ⚫ ───────────────────────────────────────┐  │
+│ │ 📊 1.2k tokens · $0.003 · 12s              │  │  ← small embed, muted color
+│ └─────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────┘
+```
+
+### Visual Language
+
+| Element | Discord Feature | Why |
+|---------|----------------|-----|
+| Agent thinking | Native typing indicator | Users recognize this instinctively |
+| Tool activity | Embed with colored sidebar | Visually distinct from conversation text |
+| Running status | 🔵 Blue sidebar | Familiar "in progress" |
+| Completed status | 🟢 Green sidebar | Familiar "success" |
+| Error status | 🔴 Red sidebar | Familiar "error" |
+| Text response | Plain message | Feels like a normal conversation reply |
+| Usage stats | Small muted embed (dark gray sidebar) | Metadata, not conversation |
+| Mode switching | Button row under tool card | Quick access, no commands needed |
+| Cancel | Button under tool card | Visible while agent is working |
+| Permissions | Embed + buttons | Structured prompt, clear actions |
+| `/outputmode` | Ephemeral reply | Config change doesn't clutter thread |
+
+### Tool Card Embed — Detail by Mode
+
+**Low mode** — Non-developer users. Show what happened, not how.
+```
+┌─ 🟢 ──────────────────────────────┐
+│ ✅ Done                     4/4    │
+│                                    │
+│ ✅ 📖 Read · ✅ ✏️ Edit          │
+│ ✅ ▶️ Run  · ✅ 📖 Read          │
+└────────────────────────────────────┘
+```
+Compact grid of icons + kind labels. No file paths, no output. Just "what tools ran."
+
+**Medium mode** (default) — General users. Show what and where.
+```
+┌─ 🟢 ──────────────────────────────┐
+│ ✅ Done                     4/4    │
+│                                    │
+│ ✅ 📖 **Read** `src/adapter.ts`   │
+│  ╰ Lines 1-80                      │
+│ ✅ ✏️ **Edit** `src/index.ts`    │
+│  ╰ +12/−3 · [View Diff]           │
+│ ✅ ▶️ **Run** `pnpm test`        │
+│  ╰ 42 tests passed                │
+│ ✅ 📖 **Read** `src/types.ts`    │
+│  ╰ Lines 1-25                      │
+│                                    │
+│ 📋 Step 3/5 — Update tests        │
+└────────────────────────────────────┘
+```
+Title + description per tool. Output summary. Viewer links for long output.
+
+**High mode** — Developers / power users. Show everything.
+```
+┌─ 🟢 ──────────────────────────────┐
+│ ✅ Done                     4/4    │
+│                                    │
+│ ✅ 📖 **Read** `src/adapter.ts`   │
+│  ╰ Lines 1-80                      │
+│ ✅ ✏️ **Edit** `src/index.ts`    │
+│  ╰ +12/−3 · [View Diff]           │
+│ ✅ ▶️ **Run** `pnpm test`        │
+│  ╰ ```                             │
+│    PASS src/adapter.test.ts        │
+│    42 tests passed                 │
+│    ```                             │
+│  ╰ [View Full Output]             │
+│ ✅ 📖 **Read** `src/types.ts`    │
+│  ╰ Lines 1-25                      │
+│ 👁️ 🔍 **Glob** `**/*.test.ts`   │
+│  ╰ 8 files matched                │
+│                                    │
+│ 💭 [View Thinking]                │
+│ 📋 Step 3/5 — Update tests        │
+└────────────────────────────────────┘
+```
+Inline output for short results. Noise tools shown (with 👁️ instead of status icon). Thinking viewer link. Full plan.
+
+### Action Row Buttons
+
+Buttons appear **under the tool card embed** while the agent is working:
+
+```
+[🔇 Low] [📊 Medium] [🔍 High] [❌ Cancel]
+```
+
+- **Mode buttons**: Switch output mode for current session (instant, re-renders tool card)
+- **Cancel button**: Sends cancel to session (same as `/cancel`)
+- Buttons are removed when the tool card finalizes (all complete/error)
+- Button state: current mode button is disabled (visually indicates active mode)
+
+### Usage Embed
+
+Small, muted embed with dark gray sidebar (`0x2f3136` — Discord dark theme color):
+
+**Low:**
+```
+┌─ ⚫ ──────────────────────┐
+│ 📊 1.2k tokens · 12s      │
+└────────────────────────────┘
+```
+
+**Medium:**
+```
+┌─ ⚫ ──────────────────────┐
+│ 📊 1.2k tokens · $0.003   │
+│ ⏱️ 12s                    │
+└────────────────────────────┘
+```
+
+**High:**
+```
+┌─ ⚫ ─────────────────────────┐
+│ 📊 1.2k / 200k tokens        │
+│ ▓▓░░░░░░░░ 6% context        │
+│ 💰 $0.003 · ⏱️ 12s          │
+└───────────────────────────────┘
+```
+
+### Ephemeral Responses
+
+These commands reply with **ephemeral messages** (only visible to the invoker, auto-dismissed):
+- `/outputmode` — confirms mode change without cluttering the thread
+- `/status` — session status (transient info)
+
+### Thinking Indicator
+
+1. Agent starts thinking → Discord typing indicator (native `channel.sendTyping()`)
+2. Typing refreshes every 8 seconds while thinking continues
+3. When thinking ends:
+   - Low/medium: typing stops silently
+   - High: thought content stored in tunnel viewer, link appears in tool card as `💭 [View Thinking]`
+
+### Permission Request
+
+```
+┌─ 🟡 ───────────────────────────────┐
+│ 🔐 Permission Required             │
+│                                     │
+│ **Run command**                     │
+│ `rm -rf dist/ && pnpm build`       │
+│                                     │
+│ Allow this tool to execute?         │
+└─────────────────────────────────────┘
+ [✅ Allow] [⛔ Deny] [✅ Always Allow]
+```
+
+Yellow sidebar for attention. Structured embed with clear context. Action buttons below.
 
 ## What Changes
 
@@ -24,7 +210,7 @@ Bring the Discord adapter to full feature parity with the Telegram adapter's out
 
 ### Updated
 - `commands/admin.ts` — `/verbosity` → `/outputmode` with session-level overrides
-- `commands/router.ts` — new callback routing for `vb:` prefix buttons
+- `commands/router.ts` — new callback routing for `vb:` prefix and action row buttons
 - `index.ts` — config migration for `displayVerbosity → outputMode`
 
 ### Unchanged
@@ -62,16 +248,19 @@ Resolved via `OutputModeResolver.resolve(configManager, "discord", sessionId, se
 
 | Element | Low | Medium | High |
 |---------|-----|--------|------|
-| Tool icon + title | Yes | Yes | Yes |
+| Tool icon + kind label | Yes (grid) | Yes (per line) | Yes (per line) |
+| Tool title (file/command) | No | Yes | Yes |
 | Tool description | No | Yes | Yes |
-| Command (terminal cmd) | No | Yes | Yes |
+| Command text | No | Yes | Yes |
 | Output summary | No | Yes | Yes |
 | Inline output content | No | No | Yes (if short) |
-| View Output link (long output) | No | Yes | Yes |
+| View Output link | No | Yes | Yes |
 | Diff stats (+X/-Y) | No | Yes | Yes |
-| Thinking content | No | No | Yes (viewer link) |
-| Noise tools | Hidden | Hidden | Shown |
-| Plan progress | No | Compact count | Full list |
+| Thinking viewer link | No | No | Yes |
+| Noise tools | Hidden | Hidden | Shown (👁️ icon) |
+| Plan progress | No | Compact (footer) | Full list |
+| Action row buttons | Yes | Yes | Yes |
+| Usage embed | Compact | Medium detail | Full detail |
 
 ## Component Design
 
@@ -94,194 +283,164 @@ Lifecycle methods:
 - `onPlan(entries)` — update ToolCardState with plan entries
 - `cleanup()` — finalize all, destroy timers
 
-**Out-of-order handling:** When `onToolUpdate()` receives an ID not in current ToolStateMap, check `previousToolStateMap`. If found, update `previousToolCard` instead. This handles late-arriving updates from the previous prompt cycle.
+**Out-of-order handling:** When `onToolUpdate()` receives an ID not in current ToolStateMap, check `previousToolStateMap`. If found, update `previousToolCard` instead.
 
-**ToolCardState flush callback:** Receives `ToolCardSnapshot`, calls `renderToolCard(snapshot)` to build Discord embed, sends/edits message via channel.
+**ToolCardState flush callback:** Receives `ToolCardSnapshot`, calls `renderToolCard(snapshot, mode)` to build Discord embed + action row, sends/edits message.
 
 ### 2. Formatting (formatting.ts — rewrite)
 
-#### Discord Embed Tool Card
+#### renderToolCard(snapshot, mode): { embeds, components }
 
-Tool cards render as **Discord embeds** with:
-- **Color sidebar:** Blue (`0x3498db`) while running, Green (`0x2ecc71`) when all done, Red (`0xe74c3c`) on error
-- **Title:** "Agent Activity" (or agent name if available)
-- **Description:** Rendered tool sections joined by newlines
-- **Footer:** Plan progress if applicable
+Returns Discord.js message payload with embed(s) + action row.
 
-#### renderToolCard(snapshot: ToolCardSnapshot): EmbedData
+**Embed structure:**
+- **Color:** Blue (`0x3498db`) running, Green (`0x2ecc71`) done, Red (`0xe74c3c`) error
+- **Author line:** Status label + completion counter (e.g. "🔄 Working... 2 of 4" or "✅ Done 4/4")
+- **Description:** Rendered tool sections (mode-dependent)
+- **Footer:** Plan progress (if applicable)
 
-Main renderer. Takes snapshot from ToolCardState, produces Discord.js `EmbedData`:
-1. Filter non-hidden specs
-2. Render each spec via `renderSpecSection(spec)`
-3. Join sections with newlines
-4. Determine color from completion state
-5. Add plan as footer or inline if present
-6. Handle embed description limit (4096 chars) — truncate and add overflow indicator
+**Action row (while running):**
+- Mode buttons: `[🔇 Low] [📊 Medium] [🔍 High]` — current mode disabled
+- Cancel button: `[❌ Cancel]` — danger style
+- Custom IDs: `om:{sessionId}:low`, `om:{sessionId}:medium`, `om:{sessionId}:high`, `cancel:{sessionId}`
+- Removed on finalize (edit message without components)
 
-#### renderSpecSection(spec: ToolDisplaySpec): string
+#### renderSpecSection(spec, mode): string
 
-Per-tool Discord markdown section:
+**Low mode:** `{statusIcon} {kindIcon} {kindLabel}` — compact, grid layout (multiple per line separated by ` · `)
 
-```markdown
-✅ 📖 **Read** `src/adapter.ts`
-> Lines 1-50
-
-🔄 ✏️ **Edit** `src/index.ts`
-> +5/-2 · [View Diff](url)
-
-⏳ ▶️ **Run** `pnpm test`
-> Running tests...
-> [View Output](url)
+**Medium mode:**
+```
+{statusIcon} {kindIcon} **{title}**
+ ╰ {description or summary}
+ ╰ {diffStats} · [View Diff](url)
 ```
 
-Rules:
-- Line 1: `{statusIcon} {kindIcon} **{title}**`
-- Line 2+ (medium/high): `> {description}` or `> {command}`
-- Output summary (medium/high): `> {summary}`
-- Diff stats (medium/high): `> +X/-Y`
-- Viewer links (medium/high): `> [View Diff](url) · [View Output](url)`
-- Inline output (high only, short output): `> \`\`\`{content}\`\`\``
+**High mode:** Same as medium plus:
+```
+ ╰ ```
+   {inline output content}
+   ```
+ ╰ [View Full Output](url)
+```
 
-#### splitToolCardEmbed(description: string): string[]
-
-If embed description exceeds 4096 chars, split at section boundaries (double newline). First chunk stays in original embed, overflow goes as follow-up embed(s).
+Noise tools (high only): `👁️ {kindIcon} **{title}**` with muted presentation.
 
 #### renderUsageEmbed(usage, mode): EmbedData
 
-Small embed for usage stats:
-- Low: tokens only
-- Medium: tokens + cost
-- High: tokens + cost + progress bar + context ratio
+Dark gray sidebar (`0x2f3136`). Content scales by mode (see UX section above).
+
+#### renderPermissionEmbed(request): { embeds, components }
+
+Yellow sidebar (`0xf1c40f`). Tool name, command/input display, action buttons.
+
+#### splitToolCardEmbed(description): string[]
+
+If embed description exceeds 4096 chars, split at section boundaries (double newline). First chunk in original embed, overflow in follow-up embed(s) with same color, no author.
 
 ### 3. Adapter Handler Updates (adapter.ts)
 
-#### New fields on DiscordAdapter:
+#### New fields:
 ```typescript
 private _activityTrackers: Map<string, ActivityTracker>
 private _outputModeResolver: OutputModeResolver
 ```
 
 #### getOrCreateTracker(sessionId, threadId, mode)
-Creates ActivityTracker per session with:
-- Resolved OutputMode
-- TunnelService (from ServiceRegistry, optional)
-- SessionContext (sessionId, threadId, adapterName)
-- Flush callback wired to send/edit Discord message
+Creates ActivityTracker per session with resolved OutputMode, TunnelService, SessionContext, and flush callback wired to send/edit Discord embed message.
 
-#### Handler method changes:
+#### Handler methods:
 
-**handleThought(sessionId, content)**
-```
-mode = resolver.resolve(configManager, "discord", sessionId, sessionManager)
-tracker = getOrCreateTracker(sessionId, threadId, mode)
-tracker.onThought(content.text)
-```
+**handleThought(sessionId, content):**
+Resolve mode → get/create tracker → `tracker.onThought(content.text)`
 
-**handleText(sessionId, content)**
-```
-tracker = getTracker(sessionId)
-if (tracker && !textStarted) tracker.onTextStart()
-draft = draftManager.getOrCreate(sessionId, threadId)
-draft.append(content.text)
-```
+**handleText(sessionId, content):**
+If first text chunk: `tracker.onTextStart()` (seals tool card, removes action buttons)
+Get/create draft → `draft.append(content.text)`
 
-**handleToolCall(sessionId, content)**
-```
-draftManager.finalize(sessionId)
-mode = resolver.resolve(...)
-tracker = getOrCreateTracker(sessionId, threadId, mode)
-tracker.onToolCall(content.meta, content.kind, content.rawInput)
-```
+**handleToolCall(sessionId, content):**
+Finalize draft → resolve mode → get/create tracker → `tracker.onToolCall(...)`
 
-**handleToolUpdate(sessionId, content)**
-```
-tracker = getTracker(sessionId)
-tracker.onToolUpdate(content.id, content.status, content.content, content.viewerLinks, content.diffStats)
-```
+**handleToolUpdate(sessionId, content):**
+Get tracker → `tracker.onToolUpdate(...)`
 
-**handlePlan(sessionId, content)**
-```
-tracker = getTracker(sessionId)
-tracker.onPlan(content.entries)
-```
+**handlePlan(sessionId, content):**
+Get tracker → `tracker.onPlan(content.entries)`
 
-**handleUsage(sessionId, content)**
-```
-draftManager.finalize(sessionId)
-mode = resolver.resolve(...)
-embed = renderUsageEmbed(content, mode)
-send embed to thread
-send completion notification to notification channel
-```
+**handleUsage(sessionId, content):**
+Finalize draft → resolve mode → render usage embed → send to thread → notify notification channel
 
-**handleSessionEnd(sessionId)**
-```
-draftManager.finalize(sessionId)
-tracker = getTracker(sessionId)
-tracker.cleanup()
-delete tracker
-```
+**handleSessionEnd(sessionId):**
+Finalize draft → tracker.cleanup() → delete tracker
+
+#### Action row button handlers (adapter.ts or router.ts):
+
+- `om:{sessionId}:{mode}` — update session outputMode, re-render current tool card with new mode
+- `cancel:{sessionId}` — call `session.cancel()`, same as `/cancel`
 
 ### 4. Output Mode Command (commands/admin.ts)
 
-Replace `/verbosity` with `/outputmode`:
-
 ```
-/outputmode [low|medium|high]           — Set adapter default
-/outputmode session [low|medium|high]   — Override for current session
-/outputmode session reset               — Clear session override
-/verbosity ...                          — Deprecated alias (same handler)
+/outputmode [low|medium|high]           — Set adapter default (ephemeral reply)
+/outputmode session [low|medium|high]   — Override for current session (ephemeral reply)
+/outputmode session reset               — Clear session override (ephemeral reply)
+/verbosity ...                          — Deprecated alias
 ```
 
-Slash command definition update:
-- Rename command to `outputmode`
-- Add `session` subcommand option
-- Keep `verbosity` as alias
-
-Callback buttons (in router.ts):
-- `vb:low`, `vb:medium`, `vb:high` — quick mode switching buttons
-- Attached to `/outputmode` response message
+All replies are **ephemeral** — config changes don't clutter the conversation thread.
 
 ### 5. Config & Migration (index.ts)
 
 On plugin setup, migrate legacy config:
 - If `discord.displayVerbosity` exists and `discord.outputMode` doesn't → copy value
-- Uses same pattern as Telegram's migration in `config-migrations.ts`
 
 ## Discord-Specific Considerations
 
 ### Message Limits
-- Embed description: 4096 chars (same as Telegram message limit — convenient)
-- Regular message: 2000 chars (affects text drafts, not tool cards)
+- Embed description: 4096 chars
 - Embed total: 6000 chars (title + description + fields + footer)
-- 10 embeds per message
+- Regular message: 2000 chars (text drafts only)
+- 10 embeds per message, 5 action rows per message
 
 ### Rate Limiting
-- Discord rate limits per route, more restrictive than Telegram
-- ToolCardState debounce (500ms) helps batch updates
+- ToolCardState debounce (500ms) batches updates
 - SendQueue with `minInterval` prevents flooding
-- Tool card edits instead of new messages reduces API calls significantly
+- Edit-in-place for tool card = 1 message regardless of tool count
+- Action row button interactions have 3-second ACK deadline — respond immediately
+
+### Mode Switch Re-render
+When user clicks a mode button on the tool card:
+1. Update session's outputMode
+2. Regenerate all ToolDisplaySpecs from current ToolStateMap with new mode
+3. Re-render tool card embed
+4. Edit message with new embed + updated action row (new mode disabled)
+5. Respond to interaction with ephemeral "Switched to {mode} mode"
 
 ### Typing Indicator
-- Discord typing indicator lasts ~10 seconds, needs refresh every 8 seconds
-- Already implemented in current ThinkingIndicator — reuse approach
-- On high mode: when thinking ends, store thought content in viewer, post link
+- Discord typing lasts ~10 seconds, refresh every 8 seconds
+- Already implemented — reuse approach
+- High mode: store thought in viewer on text start, add link to tool card
 
-### Embed vs Message Split Strategy
-- Tool card: always an embed (visually distinct)
-- Text response: always a plain message (via DraftManager)
-- Usage: always an embed (compact footer style)
-- Errors: plain message with ❌ prefix (consistent with current behavior)
+### Embed vs Message Strategy
+| Content Type | Discord Feature | Why |
+|-------------|----------------|-----|
+| Tool activity | Embed (colored sidebar) | Visually distinct from conversation |
+| Text response | Plain message | Feels like natural conversation |
+| Usage | Small embed (gray sidebar) | Metadata, unobtrusive |
+| Permissions | Embed (yellow sidebar) + buttons | Attention-grabbing, actionable |
+| Errors | Plain message with ❌ | Simple, clear |
+| `/outputmode` reply | Ephemeral message | Doesn't clutter thread |
 
 ## Edge Cases
 
-- **Tunnel unavailable:** Falls back to inline content if mode=high, no viewer links otherwise
-- **Out-of-order updates:** Buffered in ToolStateMap pendingUpdates, or routed to previousToolCard
-- **Large output:** Stored in viewer, link in embed. If no tunnel and high mode, inline truncated content
-- **Embed overflow:** Description split at section boundaries, overflow in follow-up embed
-- **Empty tool card:** If all specs are hidden (low mode, all noise), don't send embed
-- **Session mode change mid-prompt:** New mode applies to next tracker creation (next prompt cycle)
-- **Deprecated /verbosity command:** Routes to same handler, logs deprecation warning
+- **Tunnel unavailable:** No viewer links. High mode falls back to inline truncated content.
+- **Out-of-order updates:** Buffered in ToolStateMap pendingUpdates, or routed to previousToolCard.
+- **Large output:** Stored in viewer, link in embed. No tunnel + high mode = inline truncated.
+- **Embed overflow:** Description split at section boundaries, follow-up embed(s).
+- **Empty tool card:** All specs hidden (low mode, all noise) → don't send embed.
+- **Mode change mid-prompt:** Re-renders current tool card immediately with new mode.
+- **Button interaction timeout:** Discord requires ACK within 3 seconds. Mode switch and cancel handlers must ACK immediately, then process async.
+- **Deprecated /verbosity:** Routes to same handler, works identically.
 
 ## Files Changed
 
@@ -293,9 +452,9 @@ On plugin setup, migrate legacy config:
 - `src/formatting.ts` — Embed-based tool card rendering with ToolDisplaySpec
 
 ### Modified
-- `src/adapter.ts` — Handler methods, OutputModeResolver, tracker management
-- `src/commands/admin.ts` — `/outputmode` command with session overrides
-- `src/commands/router.ts` — `vb:` callback button routing
+- `src/adapter.ts` — Handler methods, OutputModeResolver, tracker management, action row handlers
+- `src/commands/admin.ts` — `/outputmode` command with session overrides, ephemeral replies
+- `src/commands/router.ts` — `om:` and `cancel:` button routing
 - `src/commands/index.ts` — Slash command definitions update
 - `src/index.ts` — Config migration for displayVerbosity → outputMode
 
