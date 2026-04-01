@@ -13,22 +13,23 @@ export async function handleDangerous(
   await interaction.deferReply({ ephemeral: true });
 
   const channelId = interaction.channelId;
-  const session = adapter.core.sessionManager.getSessionByThread(
+  const session = await adapter.core.getOrResumeSession(
     "discord",
     channelId,
   );
 
   if (session) {
-    session.dangerousMode = !session.dangerousMode;
+    const current = session.clientOverrides.bypassPermissions ?? false;
+    session.clientOverrides.bypassPermissions = !current;
     adapter.core.sessionManager
-      .patchRecord(session.id, { dangerousMode: session.dangerousMode })
+      .patchRecord(session.id, { clientOverrides: session.clientOverrides })
       .catch(() => {});
     log.info(
-      { sessionId: session.id, dangerousMode: session.dangerousMode },
+      { sessionId: session.id, bypassPermissions: session.clientOverrides.bypassPermissions },
       "[discord-admin] Dangerous mode toggled via command",
     );
 
-    const msg = session.dangerousMode
+    const msg = session.clientOverrides.bypassPermissions
       ? "☠️ **Dangerous mode enabled** — All permission requests will be auto-approved."
       : "🔐 **Dangerous mode disabled** — Permission requests will be shown normally.";
     await interaction.editReply(msg);
@@ -45,16 +46,17 @@ export async function handleDangerous(
     return;
   }
 
-  const newDangerousMode = !(record.dangerousMode ?? false);
+  const current = record.clientOverrides?.bypassPermissions ?? record.dangerousMode ?? false;
+  const newBypass = !current;
   adapter.core.sessionManager
-    .patchRecord(record.sessionId, { dangerousMode: newDangerousMode })
+    .patchRecord(record.sessionId, { clientOverrides: { bypassPermissions: newBypass } })
     .catch(() => {});
   log.info(
-    { sessionId: record.sessionId, dangerousMode: newDangerousMode },
+    { sessionId: record.sessionId, bypassPermissions: newBypass },
     "[discord-admin] Dangerous mode toggled via command (store-only)",
   );
 
-  const msg = newDangerousMode
+  const msg = newBypass
     ? "☠️ **Dangerous mode enabled** — All permission requests will be auto-approved."
     : "🔐 **Dangerous mode disabled** — Permission requests will be shown normally.";
   await interaction.editReply(msg);
@@ -69,16 +71,17 @@ export async function handleDangerousButton(
 
   // Session live in memory — toggle directly
   if (session) {
-    session.dangerousMode = !session.dangerousMode;
+    const current = session.clientOverrides.bypassPermissions ?? false;
+    session.clientOverrides.bypassPermissions = !current;
     adapter.core.sessionManager
-      .patchRecord(sessionId, { dangerousMode: session.dangerousMode })
+      .patchRecord(sessionId, { clientOverrides: session.clientOverrides })
       .catch(() => {});
     log.info(
-      { sessionId, dangerousMode: session.dangerousMode },
+      { sessionId, bypassPermissions: session.clientOverrides.bypassPermissions },
       "[discord-admin] Dangerous mode toggled via button",
     );
 
-    const toastText = session.dangerousMode
+    const toastText = session.clientOverrides.bypassPermissions
       ? "☠️ Dangerous mode enabled — permissions auto-approved"
       : "🔐 Dangerous mode disabled — permissions shown normally";
 
@@ -87,7 +90,7 @@ export async function handleDangerousButton(
         components: [
           buildSessionControlKeyboard(
             sessionId,
-            session.dangerousMode,
+            session.clientOverrides.bypassPermissions,
             session.voiceMode === "on",
           ),
         ],
@@ -114,16 +117,17 @@ export async function handleDangerousButton(
     return;
   }
 
-  const newDangerousMode = !(record.dangerousMode ?? false);
+  const current = record.clientOverrides?.bypassPermissions ?? record.dangerousMode ?? false;
+  const newBypass = !current;
   adapter.core.sessionManager
-    .patchRecord(sessionId, { dangerousMode: newDangerousMode })
+    .patchRecord(sessionId, { clientOverrides: { bypassPermissions: newBypass } })
     .catch(() => {});
   log.info(
-    { sessionId, dangerousMode: newDangerousMode },
+    { sessionId, bypassPermissions: newBypass },
     "[discord-admin] Dangerous mode toggled via button (store-only)",
   );
 
-  const toastText = newDangerousMode
+  const toastText = newBypass
     ? "☠️ Dangerous mode enabled — permissions auto-approved"
     : "🔐 Dangerous mode disabled — permissions shown normally";
 
@@ -131,7 +135,7 @@ export async function handleDangerousButton(
     // Store-only path: voiceMode unknown, default to off
     await interaction.update({
       components: [
-        buildSessionControlKeyboard(sessionId, newDangerousMode, false),
+        buildSessionControlKeyboard(sessionId, newBypass, false),
       ],
     });
   } catch {
@@ -175,7 +179,7 @@ export async function handleTTS(
   await interaction.deferReply({ ephemeral: true });
 
   const channelId = interaction.channelId;
-  const session = adapter.core.sessionManager.getSessionByThread(
+  const session = await adapter.core.getOrResumeSession(
     "discord",
     channelId,
   );
@@ -229,7 +233,7 @@ export async function handleTTSButton(
       components: [
         buildSessionControlKeyboard(
           sessionId,
-          session.dangerousMode,
+          session.clientOverrides.bypassPermissions ?? false,
           newMode === "on",
         ),
       ],
@@ -294,7 +298,7 @@ export async function handleOutputMode(
 
   if (scope === "session") {
     const threadId = interaction.channelId;
-    const session = core.sessionManager.getSessionByThread("discord", threadId);
+    const session = await core.getOrResumeSession("discord", threadId);
     if (!session) {
       await interaction.reply({ content: "⚠️ No active session found in this thread.", ephemeral: true });
       return;
