@@ -17,9 +17,9 @@ export class DiscordRenderer extends BaseRenderer {
     return { body: formatToolUpdate(meta as ToolUpdateMeta, verbosity), format: 'markdown' }
   }
 
-  renderPlan(content: OutgoingMessage, verbosity: DisplayVerbosity): RenderedMessage {
+  renderPlan(content: OutgoingMessage): RenderedMessage {
     const entries = (content.metadata as { entries?: PlanEntry[] })?.entries ?? []
-    return { body: formatPlan(entries, verbosity), format: 'markdown' }
+    return { body: formatPlan(entries), format: 'markdown' }
   }
 
   renderUsage(content: OutgoingMessage, verbosity: DisplayVerbosity): RenderedMessage {

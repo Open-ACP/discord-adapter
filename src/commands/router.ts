@@ -73,7 +73,7 @@ export async function handleSlashCommand(
       case "help":
         await handleHelp(interaction, adapter);
         break;
-      case "dangerous":
+      case "bypass":
         await handleDangerous(interaction, adapter);
         break;
       case "restart":

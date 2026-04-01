@@ -26,12 +26,12 @@ export async function handleDangerous(
       .catch(() => {});
     log.info(
       { sessionId: session.id, bypassPermissions: session.clientOverrides.bypassPermissions },
-      "[discord-admin] Dangerous mode toggled via command",
+      "[discord-admin] Bypass permissions toggled via command",
     );
 
     const msg = session.clientOverrides.bypassPermissions
-      ? "☠️ **Dangerous mode enabled** — All permission requests will be auto-approved."
-      : "🔐 **Dangerous mode disabled** — Permission requests will be shown normally.";
+      ? "☠️ **Bypass permissions enabled** — All permission requests will be auto-approved."
+      : "🔐 **Bypass permissions disabled** — Permission requests will be shown normally.";
     await interaction.editReply(msg);
     return;
   }
@@ -53,12 +53,12 @@ export async function handleDangerous(
     .catch(() => {});
   log.info(
     { sessionId: record.sessionId, bypassPermissions: newBypass },
-    "[discord-admin] Dangerous mode toggled via command (store-only)",
+    "[discord-admin] Bypass permissions toggled via command (store-only)",
   );
 
   const msg = newBypass
-    ? "☠️ **Dangerous mode enabled** — All permission requests will be auto-approved."
-    : "🔐 **Dangerous mode disabled** — Permission requests will be shown normally.";
+    ? "☠️ **Bypass permissions enabled** — All permission requests will be auto-approved."
+    : "🔐 **Bypass permissions disabled** — Permission requests will be shown normally.";
   await interaction.editReply(msg);
 }
 
@@ -78,12 +78,12 @@ export async function handleDangerousButton(
       .catch(() => {});
     log.info(
       { sessionId, bypassPermissions: session.clientOverrides.bypassPermissions },
-      "[discord-admin] Dangerous mode toggled via button",
+      "[discord-admin] Bypass permissions toggled via button",
     );
 
     const toastText = session.clientOverrides.bypassPermissions
-      ? "☠️ Dangerous mode enabled — permissions auto-approved"
-      : "🔐 Dangerous mode disabled — permissions shown normally";
+      ? "☠️ Bypass permissions enabled — permissions auto-approved"
+      : "🔐 Bypass permissions disabled — permissions shown normally";
 
     try {
       await interaction.update({
@@ -124,12 +124,12 @@ export async function handleDangerousButton(
     .catch(() => {});
   log.info(
     { sessionId, bypassPermissions: newBypass },
-    "[discord-admin] Dangerous mode toggled via button (store-only)",
+    "[discord-admin] Bypass permissions toggled via button (store-only)",
   );
 
   const toastText = newBypass
-    ? "☠️ Dangerous mode enabled — permissions auto-approved"
-    : "🔐 Dangerous mode disabled — permissions shown normally";
+    ? "☠️ Bypass permissions enabled — permissions auto-approved"
+    : "🔐 Bypass permissions disabled — permissions shown normally";
 
   try {
     // Store-only path: voiceMode unknown, default to off
@@ -161,8 +161,8 @@ export function buildSessionControlKeyboard(
       .setCustomId(`d:${sessionId}`)
       .setLabel(
         dangerousMode
-          ? "🔐 Disable Dangerous Mode"
-          : "☠️ Enable Dangerous Mode",
+          ? "🔐 Disable Bypass Permissions"
+          : "☠️ Enable Bypass Permissions",
       )
       .setStyle(dangerousMode ? ButtonStyle.Secondary : ButtonStyle.Danger),
     new ButtonBuilder()

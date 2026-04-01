@@ -170,9 +170,9 @@ export function buildAssistantSystemPrompt(core: OpenACPCore): string {
 ### Restart / Update
 - Always ask for confirmation — these are disruptive actions
 
-### Toggle Dangerous Mode
-- Run \`openacp api dangerous <id> on|off\`
-- Explain: dangerous mode auto-approves all permission requests
+### Toggle Bypass Permissions
+- Run \`openacp api bypass <id> on|off\`
+- Explain: bypass permissions auto-approves all permission requests
 
 ## CLI Commands Reference
 \`\`\`bash
@@ -182,7 +182,7 @@ openacp api session <id>                 # Session detail
 openacp api new <agent> <workspace> --channel discord  # Create new session
 openacp api send <id> "prompt text"      # Send prompt to session
 openacp api cancel <id>                  # Cancel session
-openacp api dangerous <id> on|off        # Toggle dangerous mode
+openacp api bypass <id> on|off            # Toggle bypass permissions
 
 # Topic management
 openacp api topics                       # List all topics

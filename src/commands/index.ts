@@ -54,8 +54,8 @@ export const SLASH_COMMANDS = [
   new SlashCommandBuilder().setName("help").setDescription("Show help"),
 
   new SlashCommandBuilder()
-    .setName("dangerous")
-    .setDescription("Toggle dangerous mode for the current session"),
+    .setName("bypass")
+    .setDescription("Toggle bypass permissions for the current session"),
 
   new SlashCommandBuilder()
     .setName("restart")
