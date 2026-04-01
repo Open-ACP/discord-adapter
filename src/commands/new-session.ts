@@ -142,8 +142,6 @@ export async function executeNewSession(
       await (interaction as ChatInputCommandInteraction).reply({ content: replyMsg, ephemeral: true })
     }
 
-    // Warm up model cache in background
-    session.warmup().catch((err: unknown) => log.error({ err }, '[discord-new-session] Warm-up error'))
   } catch (err) {
     log.error({ err }, '[discord-new-session] Session creation failed')
 

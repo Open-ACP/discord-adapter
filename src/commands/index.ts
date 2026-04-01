@@ -54,8 +54,29 @@ export const SLASH_COMMANDS = [
   new SlashCommandBuilder().setName("help").setDescription("Show help"),
 
   new SlashCommandBuilder()
-    .setName("dangerous")
-    .setDescription("Toggle dangerous mode for the current session"),
+    .setName("mode")
+    .setDescription("Switch session mode (e.g. code, architect, ask)")
+    .addStringOption((o) =>
+      o.setName("value").setDescription("Mode to switch to").setRequired(false),
+    ),
+
+  new SlashCommandBuilder()
+    .setName("model")
+    .setDescription("Switch the AI model for this session")
+    .addStringOption((o) =>
+      o.setName("value").setDescription("Model to switch to").setRequired(false),
+    ),
+
+  new SlashCommandBuilder()
+    .setName("thought")
+    .setDescription("Adjust how much the agent thinks before responding")
+    .addStringOption((o) =>
+      o.setName("value").setDescription("Thinking level").setRequired(false),
+    ),
+
+  new SlashCommandBuilder()
+    .setName("bypass")
+    .setDescription("Auto-approve all permission requests (skip confirmations)"),
 
   new SlashCommandBuilder()
     .setName("restart")

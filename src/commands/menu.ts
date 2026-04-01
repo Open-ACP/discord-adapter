@@ -64,7 +64,7 @@ export async function handleHelp(
       `\`/settings\` — View configuration\n` +
       `\`/menu\` — Show action menu\n\n` +
       `🔒 **Session Options**\n` +
-      `\`/dangerous\` — Toggle dangerous mode (auto-approve permissions)\n` +
+      `\`/bypass\` — Toggle bypass permissions (auto-approve permissions)\n` +
       `\`/tts\` — Toggle Text to Speech (on/off/next message)\n` +
       `\`/handoff\` — Continue session in your terminal\n` +
       `\`/clear\` — Clear assistant session history\n\n` +
