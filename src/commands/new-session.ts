@@ -173,3 +173,43 @@ export async function handleNewSessionButton(
     await executeNewSession(interaction, adapter, agentKey, undefined)
   }
 }
+
+/** Show agent picker as a followUp message (used from menu button) */
+export async function showAgentPickerButton(
+  interaction: ButtonInteraction,
+  adapter: DiscordAdapter,
+): Promise<void> {
+  const installedEntries = adapter.core.agentCatalog.getInstalledEntries()
+  const agentKeys = Object.keys(installedEntries)
+  const config = adapter.core.configManager.get()
+
+  if (agentKeys.length === 0) {
+    await interaction.followUp({ content: '❌ No agents installed. Use `/install` to install an agent first.', ephemeral: true })
+    return
+  }
+
+  if (agentKeys.length === 1) {
+    try { await interaction.deferUpdate() } catch { /* ignore */ }
+    await executeNewSession(interaction, adapter, config.defaultAgent, undefined)
+    return
+  }
+
+  // Multiple agents — show picker buttons
+  const row = new ActionRowBuilder<ButtonBuilder>()
+  for (const key of agentKeys) {
+    const agent = installedEntries[key]!
+    const label = key === config.defaultAgent ? `${agent.name} (default)` : agent.name
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`m:new:agent:${key}`)
+        .setLabel(label)
+        .setStyle(ButtonStyle.Primary),
+    )
+  }
+
+  await interaction.followUp({
+    content: '🆕 **New Session**\nChoose an agent:',
+    components: [row],
+    ephemeral: true,
+  })
+}

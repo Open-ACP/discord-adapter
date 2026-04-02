@@ -3,14 +3,15 @@ import { log, PRODUCT_GUIDE } from '@openacp/plugin-sdk'
 
 export interface SpawnAssistantResult {
   session: Session
-  /** Resolves when the background system prompt completes (or fails). */
-  ready: Promise<void>
+  /** The system prompt to prepend to the first real user message. */
+  pendingSystemPrompt: string
 }
 
 /**
  * Spawns an assistant session for the Discord adapter.
- * Creates a session with the default agent, sets the threadId to the given Discord thread/channel,
- * and fires a system prompt in the background.
+ * Creates a session with the default agent, sets the threadId to the given Discord thread/channel.
+ * The system prompt is deferred — it will be prepended to the first real user message
+ * so no unsolicited AI response is sent on startup.
  */
 export async function spawnAssistant(
   core: OpenACPCore,
@@ -24,26 +25,15 @@ export async function spawnAssistant(
     channelId: 'discord',
     agentName: config.defaultAgent,
     workingDirectory: core.configManager.resolveWorkspace(),
-    initialName: 'Assistant', // Prevent auto-naming from triggering after system prompt
+    initialName: 'Assistant',
   })
   session.threadId = threadId
 
-  log.info({ sessionId: session.id, threadId }, '[discord-assistant] Assistant agent spawned')
+  log.info({ sessionId: session.id, threadId }, '[discord-assistant] Assistant spawned (system prompt deferred)')
 
-  // Build dynamic context for system prompt
-  const systemPrompt = buildAssistantSystemPrompt(core)
+  const pendingSystemPrompt = buildAssistantSystemPrompt(core)
 
-  // Fire system prompt in background — don't block startup
-  const ready = session
-    .enqueuePrompt(systemPrompt)
-    .then(() => {
-      log.info({ sessionId: session.id }, '[discord-assistant] System prompt completed')
-    })
-    .catch((err) => {
-      log.warn({ err }, '[discord-assistant] System prompt failed')
-    })
-
-  return { session, ready }
+  return { session, pendingSystemPrompt }
 }
 
 /**
@@ -61,18 +51,24 @@ export function buildWelcomeMessage(core: OpenACPCore): string {
   const agents = Object.keys(installedEntries)
   const config = core.configManager.get()
   const defaultAgent = config.defaultAgent
+  const workspace = core.configManager.resolveWorkspace()
 
   const agentList = agents
     .map((a) => `${a}${a === defaultAgent ? ' (default)' : ''}`)
     .join(', ')
 
   if (totalCount === 0) {
-    return `👋 **OpenACP is ready!**\n\nNo sessions yet. Use \`/new\` to start, or ask me anything!\n\nAgents: ${agentList}`
+    return (
+      `👋 **OpenACP is ready!**\n\n` +
+      `📂 ${workspace}\n\n` +
+      `No sessions yet. Use \`/new\` to start, or ask me anything!\n\nAgents: ${agentList}`
+    )
   }
 
   if (errorCount > 0) {
     return (
       `👋 **OpenACP is ready!**\n\n` +
+      `📂 ${workspace}\n` +
       `📊 ${activeCount} active, ${errorCount} errors / ${totalCount} total\n` +
       `⚠️ ${errorCount} session${errorCount > 1 ? 's have' : ' has'} errors — ask me to check.\n\n` +
       `Agents: ${agentList}`
@@ -81,6 +77,7 @@ export function buildWelcomeMessage(core: OpenACPCore): string {
 
   return (
     `👋 **OpenACP is ready!**\n\n` +
+    `📂 ${workspace}\n` +
     `📊 ${activeCount} active / ${totalCount} total\n` +
     `Agents: ${agentList}`
   )

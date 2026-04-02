@@ -74,6 +74,7 @@ export class DiscordAdapter extends MessagingAdapter {
   private notificationChannel!: TextChannel;
   private assistantSession: Session | null = null;
   private assistantInitializing = false;
+  private pendingAssistantSystemPrompt: string | null = null;
   private fileService: FileServiceInterface;
 
   // Per-session thread context for concurrency safety in sendMessage handlers
@@ -472,8 +473,13 @@ export class DiscordAdapter extends MessagingAdapter {
           threadId === this.discordConfig.assistantThreadId
         ) {
           if (this.assistantSession && text) {
+            let promptText = text;
+            if (this.pendingAssistantSystemPrompt) {
+              promptText = `${this.pendingAssistantSystemPrompt}\n\n---\n\nUser message:\n${text}`;
+              this.pendingAssistantSystemPrompt = null;
+            }
             await this.assistantSession.enqueuePrompt(
-              text,
+              promptText,
               attachments.length > 0 ? attachments : undefined,
             );
           }
@@ -549,11 +555,10 @@ export class DiscordAdapter extends MessagingAdapter {
 
     this.assistantInitializing = true;
     try {
-      const { session, ready } = await spawnAssistant(this.core, threadId);
+      const { session, pendingSystemPrompt } = await spawnAssistant(this.core, threadId);
       this.assistantSession = session;
-      ready.finally(() => {
-        this.assistantInitializing = false;
-      });
+      this.pendingAssistantSystemPrompt = pendingSystemPrompt;
+      this.assistantInitializing = false;
     } catch (err) {
       this.assistantInitializing = false;
       log.error({ err }, "[DiscordAdapter] Failed to spawn assistant");
