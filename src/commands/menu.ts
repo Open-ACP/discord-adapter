@@ -117,7 +117,8 @@ export async function handleMenuButton(
         break
       }
       case 'm:sessions': {
-        await showSessionsList(interaction, adapter)
+        const { showSessionsListButton } = await import('./session.js')
+        await showSessionsListButton(interaction, adapter)
         break
       }
       case 'm:status': {
@@ -200,34 +201,3 @@ async function showGlobalStatus(interaction: ButtonInteraction, adapter: Discord
   })
 }
 
-async function showSessionsList(interaction: ButtonInteraction, adapter: DiscordAdapter): Promise<void> {
-  const allRecords = adapter.core.sessionManager.listRecords()
-  if (allRecords.length === 0) {
-    await interaction.followUp({ content: 'No sessions found.', ephemeral: true })
-    return
-  }
-
-  const STATUS_EMOJI: Record<string, string> = {
-    active: '🟢', initializing: '🟡', finished: '✅', error: '❌', cancelled: '⛔',
-  }
-  const STATUS_ORDER: Record<string, number> = {
-    active: 0, initializing: 1, error: 2, finished: 3, cancelled: 4,
-  }
-
-  allRecords.sort(
-    (a: any, b: any) => (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5),
-  )
-
-  const lines = allRecords.slice(0, 20).map((r: any) => {
-    const emoji = STATUS_EMOJI[r.status] || '⚪'
-    const name = r.name?.trim() || `${r.agentName} session`
-    return `${emoji} **${name}** \`[${r.status}]\``
-  })
-
-  const truncated = allRecords.length > 20 ? `\n\n*...and ${allRecords.length - 20} more*` : ''
-
-  await interaction.followUp({
-    content: `**Sessions: ${allRecords.length}**\n\n${lines.join('\n')}${truncated}`,
-    ephemeral: true,
-  })
-}

@@ -178,6 +178,16 @@ export async function handleSessions(
       rows.push(cleanupAllRow)
     }
 
+    // Full cleanup (all including active) — always shown
+    const everythingRow = new ActionRowBuilder<ButtonBuilder>()
+    everythingRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId('m:cleanup:everything')
+        .setLabel(`⚠️ Cleanup ALL (${allRecords.length})`)
+        .setStyle(ButtonStyle.Danger),
+    )
+    rows.push(everythingRow)
+
     await interaction.editReply({
       content: `${header}\n\n${lines.join('\n')}${truncated}`,
       components: rows,
@@ -257,6 +267,31 @@ export async function handleCleanupButton(
       await runCleanup(interaction, adapter, ['error', 'cancelled'])
       break
 
+    case 'm:cleanup:everything': {
+      // Show confirmation dialog before wiping all sessions (including active)
+      try { await interaction.deferUpdate() } catch { /* ignore */ }
+      const allRecords = adapter.core.sessionManager.listRecords()
+      const totalCount = allRecords.length
+      if (totalCount === 0) {
+        await interaction.followUp({ content: 'Nothing to clean up.', ephemeral: true })
+        break
+      }
+      const activeCount = allRecords.filter((r: any) => r.status === 'active' || r.status === 'initializing').length
+      const warning = activeCount > 0
+        ? `\n\n⚠️ **${activeCount} active session(s) will be cancelled and their agents stopped!**`
+        : ''
+      const confirmRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder().setCustomId('m:cleanup:confirm').setLabel('Yes, delete all').setStyle(ButtonStyle.Danger),
+        new ButtonBuilder().setCustomId('m:cleanup:cancel').setLabel('Cancel').setStyle(ButtonStyle.Secondary),
+      )
+      await interaction.followUp({
+        content: `**Delete all ${totalCount} sessions?**${warning}\n\nThis cannot be undone.`,
+        components: [confirmRow],
+        ephemeral: true,
+      })
+      break
+    }
+
     case 'm:cleanup:confirm':
       await interaction.deferReply({ ephemeral: true })
       await runCleanup(interaction, adapter, ['finished', 'error', 'cancelled', 'active', 'initializing'])
@@ -269,6 +304,103 @@ export async function handleCleanupButton(
     default:
       // Unknown cleanup variant — ignore
       try { await interaction.reply({ content: 'Unknown cleanup action.', ephemeral: true }) } catch { /* ignore */ }
+  }
+}
+
+/** Show sessions list with cleanup buttons as a followUp (used from menu button) */
+export async function showSessionsListButton(
+  interaction: ButtonInteraction,
+  adapter: DiscordAdapter,
+): Promise<void> {
+  try {
+    const allRecords = adapter.core.sessionManager.listRecords()
+
+    // Only show sessions with a Discord thread
+    const records = allRecords.filter((r: any) => {
+      const platform = r.platform as { topicId?: string | number }
+      return !!platform?.topicId
+    })
+    const headlessCount = allRecords.length - records.length
+
+    if (records.length === 0) {
+      const extra = headlessCount > 0 ? ` (${headlessCount} headless hidden)` : ''
+      await interaction.followUp({ content: `No sessions found.${extra}`, ephemeral: true })
+      return
+    }
+
+    records.sort(
+      (a: any, b: any) => (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5),
+    )
+
+    const MAX_DISPLAY = 25
+    const displayed = records.slice(0, MAX_DISPLAY)
+
+    const lines = displayed.map((r: any) => {
+      const emoji = STATUS_EMOJI[r.status] || '⚪'
+      const name = r.name?.trim() || `${r.agentName} session`
+      return `${emoji} **${name}** \`[${r.status}]\``
+    })
+
+    const header =
+      `**Sessions: ${records.length}**` +
+      (headlessCount > 0 ? ` (${headlessCount} headless hidden)` : '')
+    const truncated =
+      records.length > MAX_DISPLAY ? `\n\n*...and ${records.length - MAX_DISPLAY} more*` : ''
+
+    const finishedCount = allRecords.filter((r: any) => r.status === 'finished').length
+    const errorCount = allRecords.filter(
+      (r: any) => r.status === 'error' || r.status === 'cancelled',
+    ).length
+
+    const rows: ActionRowBuilder<ButtonBuilder>[] = []
+
+    if (finishedCount + errorCount > 0) {
+      const cleanupRow = new ActionRowBuilder<ButtonBuilder>()
+      if (finishedCount > 0) {
+        cleanupRow.addComponents(
+          new ButtonBuilder()
+            .setCustomId('m:cleanup:finished')
+            .setLabel(`Cleanup finished (${finishedCount})`)
+            .setStyle(ButtonStyle.Secondary),
+        )
+      }
+      if (errorCount > 0) {
+        cleanupRow.addComponents(
+          new ButtonBuilder()
+            .setCustomId('m:cleanup:errors')
+            .setLabel(`Cleanup errors (${errorCount})`)
+            .setStyle(ButtonStyle.Secondary),
+        )
+      }
+      rows.push(cleanupRow)
+
+      rows.push(
+        new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId('m:cleanup:all')
+            .setLabel(`Cleanup all non-active (${finishedCount + errorCount})`)
+            .setStyle(ButtonStyle.Secondary),
+        ),
+      )
+    }
+
+    rows.push(
+      new ActionRowBuilder<ButtonBuilder>().addComponents(
+        new ButtonBuilder()
+          .setCustomId('m:cleanup:everything')
+          .setLabel(`⚠️ Cleanup ALL (${allRecords.length})`)
+          .setStyle(ButtonStyle.Danger),
+      ),
+    )
+
+    await interaction.followUp({
+      content: `${header}\n\n${lines.join('\n')}${truncated}`,
+      components: rows,
+      ephemeral: true,
+    })
+  } catch (err) {
+    log.error({ err }, '[discord-session] showSessionsListButton error')
+    await interaction.followUp({ content: '❌ Failed to list sessions.', ephemeral: true }).catch(() => {})
   }
 }
 
