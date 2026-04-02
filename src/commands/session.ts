@@ -106,10 +106,10 @@ export async function handleSessions(
   try {
     const allRecords = adapter.core.sessionManager.listRecords()
 
-    // Only show sessions that have a Discord thread
+    // Only show sessions that have a Discord thread (stored as threadId, topicId is legacy)
     const records = allRecords.filter((r: any) => {
-      const platform = r.platform as { topicId?: string | number }
-      return !!platform?.topicId
+      const platform = r.platform as { threadId?: string; topicId?: string | number }
+      return !!(platform?.threadId ?? platform?.topicId)
     })
     const headlessCount = allRecords.length - records.length
 
@@ -293,7 +293,8 @@ export async function handleCleanupButton(
     }
 
     case 'm:cleanup:confirm':
-      await interaction.deferReply({ ephemeral: true })
+      // deferUpdate replaces the confirmation message in-place (removes dangling buttons)
+      try { await interaction.deferUpdate() } catch { /* ignore */ }
       await runCleanup(interaction, adapter, ['finished', 'error', 'cancelled', 'active', 'initializing'])
       break
 

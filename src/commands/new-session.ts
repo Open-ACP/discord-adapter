@@ -34,7 +34,7 @@ export async function handleNew(
   }
 
   if (agentKeys.length === 1) {
-    await executeNewSession(interaction, adapter, config.defaultAgent, workspace)
+    await executeNewSession(interaction, adapter, agentKeys[0], workspace)
     return
   }
 
@@ -189,8 +189,7 @@ export async function showAgentPickerButton(
   }
 
   if (agentKeys.length === 1) {
-    try { await interaction.deferUpdate() } catch { /* ignore */ }
-    await executeNewSession(interaction, adapter, config.defaultAgent, undefined)
+    await executeNewSession(interaction, adapter, agentKeys[0], undefined)
     return
   }
 
