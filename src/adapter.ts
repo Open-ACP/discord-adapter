@@ -81,6 +81,7 @@ export class DiscordAdapter extends MessagingAdapter {
   // Per-session thread context for concurrency safety in sendMessage handlers
   private _sessionContexts = new Map<string, { thread: ThreadChannel; isAssistant: boolean }>();
   private _configChangedHandler?: (data: { sessionId: string }) => void;
+  private _threadReadyHandler?: (data: { sessionId: string; channelId: string; threadId: string }) => void;
 
   constructor(core: OpenACPCore, config: DiscordChannelConfig) {
     super(
@@ -188,6 +189,37 @@ export class DiscordAdapter extends MessagingAdapter {
           };
           this.core.eventBus.on('session:configChanged', this._configChangedHandler);
 
+          // Send welcome + control messages for sessions created via API/CLI (not via /new command)
+          this._threadReadyHandler = ({ sessionId, channelId, threadId }) => {
+            if (channelId !== 'discord') return;
+            const session = this.core.sessionManager.getSession(sessionId);
+            if (!session) return;
+            // Assistant manages its own welcome message
+            if (this.assistantSession && sessionId === this.assistantSession.id) return;
+
+            this.guild.channels.fetch(threadId)
+              .then((channel) => {
+                if (!channel || !channel.isThread()) return;
+                const thread = channel as ThreadChannel;
+                return thread.send({ content: '⏳ Setting up session, please wait...' })
+                  .then(() =>
+                    thread.send({
+                      content:
+                        `✅ **Session started**\n` +
+                        `**Agent:** ${session.agentName}\n` +
+                        `**Workspace:** \`${session.workingDirectory}\`\n\n` +
+                        `This is your coding session — chat here to work with the agent.`,
+                      components: [buildSessionControlKeyboard(sessionId, false, false)],
+                    }),
+                  )
+                  .then((controlMsg) => this.persistControlMsgId(sessionId, controlMsg.id));
+              })
+              .catch((err) => {
+                log.warn({ err, sessionId, threadId }, '[DiscordAdapter] Failed to send initial messages for API-created session');
+              });
+          };
+          this.core.eventBus.on('session:threadReady', this._threadReadyHandler);
+
           log.info("[DiscordAdapter] Initialization complete");
           resolve();
         } catch (err) {
@@ -217,6 +249,10 @@ export class DiscordAdapter extends MessagingAdapter {
     if (this._configChangedHandler) {
       this.core.eventBus.off('session:configChanged', this._configChangedHandler);
       this._configChangedHandler = undefined;
+    }
+    if (this._threadReadyHandler) {
+      this.core.eventBus.off('session:threadReady', this._threadReadyHandler);
+      this._threadReadyHandler = undefined;
     }
     this.client.destroy();
     log.info("[DiscordAdapter] Stopped");
