@@ -125,7 +125,7 @@ export async function executeNewSession(
 
     // Send welcome message in the new thread
     const controlRow = buildSessionControlKeyboard(session.id, false, false)
-    await thread.send({
+    const controlMsg = await thread.send({
       content:
         `✅ **Session started**\n` +
         `**Agent:** ${session.agentName}\n` +
@@ -133,6 +133,9 @@ export async function executeNewSession(
         `This is your coding session — chat here to work with the agent.`,
       components: [controlRow],
     })
+
+    // Persist control message ID for post-restart button updates
+    await adapter.persistControlMsgId(session.id, controlMsg.id).catch(() => {})
 
     // Reply to the interaction with a link to the thread
     const replyMsg = `✅ Session created → [Open thread](https://discord.com/channels/${adapter.getGuildId()}/${thread.id})`

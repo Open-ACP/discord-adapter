@@ -1100,6 +1100,29 @@ export class DiscordAdapter extends MessagingAdapter {
   getAssistantThreadId(): string | null {
     return this.discordConfig.assistantThreadId;
   }
+
+  /**
+   * Persist the control message ID to the session record so it survives restart.
+   * Called after sending the welcome/control message in new-session.ts.
+   */
+  async persistControlMsgId(sessionId: string, messageId: string): Promise<void> {
+    const record = this.core.sessionManager.getSessionRecord(sessionId);
+    if (!record) return;
+    await this.core.sessionManager.patchRecord(sessionId, {
+      platform: { ...(record.platform ?? {}), controlMsgId: messageId },
+    }).catch((err) => {
+      log.warn({ err, sessionId }, "[DiscordAdapter] Failed to persist controlMsgId");
+    });
+  }
+
+  /**
+   * Retrieve stored control message ID for a session (survives restart via session record).
+   */
+  getControlMsgId(sessionId: string): string | undefined {
+    const record = this.core.sessionManager.getSessionRecord(sessionId);
+    const platform = record?.platform as { controlMsgId?: string } | undefined;
+    return platform?.controlMsgId;
+  }
 }
 
 // ─── OutputModeResolver ────────────────────────────────────────────────────────
