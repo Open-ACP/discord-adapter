@@ -91,13 +91,18 @@ export async function handleTunnels(
   }
 
   try {
-    const tunnels: Array<{
+    const allTunnels: Array<{
       port: number;
       publicUrl?: string;
       label?: string;
       sessionId?: string;
       status?: string;
     }> = tunnelService.listTunnels?.() ?? [];
+
+    // Only show tunnels that are active or starting — stopped/failed tunnels are excluded
+    const tunnels = allTunnels.filter(
+      (t) => !t.status || t.status === "active" || t.status === "starting",
+    );
 
     if (tunnels.length === 0) {
       await interaction.editReply("No active tunnels.");
