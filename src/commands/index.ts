@@ -75,6 +75,16 @@ export const SLASH_COMMANDS = [
     ),
 
   new SlashCommandBuilder()
+    .setName("switch")
+    .setDescription("Switch to a different agent for this session")
+    .addStringOption((o) =>
+      o
+        .setName("agent")
+        .setDescription("Agent name to switch to (omit to see menu)")
+        .setRequired(false),
+    ),
+
+  new SlashCommandBuilder()
     .setName("bypass")
     .setDescription("Auto-approve all permission requests (skip confirmations)"),
 
