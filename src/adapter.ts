@@ -28,7 +28,7 @@ import type { CommandRegistry } from "@openacp/plugin-sdk";
 import { DiscordRenderer } from "./renderer.js";
 import type { DiscordChannelConfig } from "./types.js";
 import { DiscordDraftManager } from "./draft-manager.js";
-import { ActivityTracker, type ToolCallMeta, type OutputMode } from "./activity.js";
+import { ActivityTracker, type ToolCallMeta, type OutputMode, type TunnelServiceInterface } from "./activity.js";
 import { SkillCommandManager } from "./skill-command-manager.js";
 import { PermissionHandler } from "./permissions.js";
 import {
@@ -686,11 +686,18 @@ export class DiscordAdapter extends MessagingAdapter {
   ): ActivityTracker {
     let tracker = this.sessionTrackers.get(sessionId);
     if (!tracker) {
+      const tunnelService = (this.core as any).tunnelService as TunnelServiceInterface | undefined;
+      const session = this.core.sessionManager.getSession(sessionId);
+      const sessionContext = session
+        ? { id: sessionId, workingDirectory: session.workingDirectory }
+        : undefined;
       tracker = new ActivityTracker(
         thread,
         this.sendQueue,
         outputMode,
         sessionId,
+        tunnelService,
+        sessionContext,
       );
       this.sessionTrackers.set(sessionId, tracker);
     } else {
