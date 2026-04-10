@@ -20,7 +20,7 @@ function buildAgentListKeyboard(
     currentRow.addComponents(
       new ButtonBuilder()
         .setCustomId(`i:agent:${agent}`)
-        .setLabel(`🤖 ${agent}`)
+        .setLabel(`🤖 ${agent.slice(0, 77)}`)
         .setStyle(ButtonStyle.Secondary),
     );
     count++;
@@ -54,8 +54,8 @@ function buildAgentItemsKeyboard(
         )
         .setLabel(
           installed
-            ? `✅ ${item.name} — Uninstall`
-            : `📦 ${item.name} — Install`,
+            ? `✅ ${item.name.slice(0, 57)} — Uninstall`
+            : `📦 ${item.name.slice(0, 60)} — Install`,
         )
         .setStyle(installed ? ButtonStyle.Secondary : ButtonStyle.Success),
     );
@@ -64,11 +64,12 @@ function buildAgentItemsKeyboard(
     if (count % 2 === 0) {
       rows.push(currentRow);
       currentRow = new ActionRowBuilder<ButtonBuilder>();
+      if (rows.length >= 4) break; // reserve row 5 for Back button
     }
   }
-  if (currentRow.components.length > 0) rows.push(currentRow);
+  if (currentRow.components.length > 0 && rows.length < 4) rows.push(currentRow);
 
-  // Back button always appended as its own row
+  // Back button always occupies the final row
   rows.push(
     new ActionRowBuilder<ButtonBuilder>().addComponents(
       new ButtonBuilder()
@@ -78,7 +79,7 @@ function buildAgentItemsKeyboard(
     ),
   );
 
-  return rows.slice(0, 5);
+  return rows; // max 5 rows: 4 item rows + 1 back row
 }
 
 // ─── Slash command handler ──────────────────────────────────────────────────
