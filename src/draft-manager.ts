@@ -13,6 +13,7 @@ import { detectAction, storeAction, buildActionKeyboard } from './action-detect.
  */
 export class DiscordDraftManager {
   private drafts = new Map<string, MessageDraft>()
+  private finalizedDrafts = new Map<string, MessageDraft>()
   private textBuffers = new Map<string, string>()
 
   constructor(
@@ -33,7 +34,7 @@ export class DiscordDraftManager {
   }
 
   getDraft(sessionId: string): MessageDraft | undefined {
-    return this.drafts.get(sessionId)
+    return this.drafts.get(sessionId) ?? this.finalizedDrafts.get(sessionId)
   }
 
   appendText(sessionId: string, text: string): void {
@@ -57,6 +58,7 @@ export class DiscordDraftManager {
     // from double-finalizing the same draft
     this.drafts.delete(sessionId)
     await draft.finalize()
+    this.finalizedDrafts.set(sessionId, draft)
 
     // Detect actions in assistant responses and attach action buttons
     if (isAssistant && thread) {
@@ -84,6 +86,7 @@ export class DiscordDraftManager {
 
   cleanup(sessionId: string): void {
     this.drafts.delete(sessionId)
+    this.finalizedDrafts.delete(sessionId)
     this.textBuffers.delete(sessionId)
   }
 }
