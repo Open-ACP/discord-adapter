@@ -734,7 +734,7 @@ export class DiscordAdapter extends MessagingAdapter {
   ): ActivityTracker {
     let tracker = this.sessionTrackers.get(sessionId);
     if (!tracker) {
-      const tunnelService = (this.core as any).tunnelService as TunnelServiceInterface | undefined;
+      const tunnelService = this.core.lifecycleManager?.serviceRegistry?.get("tunnel") as TunnelServiceInterface | undefined;
       const session = this.core.sessionManager.getSession(sessionId);
       const sessionContext = session
         ? { id: sessionId, workingDirectory: session.workingDirectory }

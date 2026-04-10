@@ -14,7 +14,7 @@ export async function handleTunnel(
 ): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const tunnelService = (adapter.core as any).tunnelService;
+  const tunnelService = adapter.core.lifecycleManager?.serviceRegistry?.get("tunnel") as any;
   if (!tunnelService) {
     await interaction.editReply("❌ Tunnel service is not enabled.");
     return;
@@ -84,7 +84,7 @@ export async function handleTunnels(
 ): Promise<void> {
   await interaction.deferReply({ ephemeral: true });
 
-  const tunnelService = (adapter.core as any).tunnelService;
+  const tunnelService = adapter.core.lifecycleManager?.serviceRegistry?.get("tunnel") as any;
   if (!tunnelService) {
     await interaction.editReply("❌ Tunnel service is not enabled.");
     return;

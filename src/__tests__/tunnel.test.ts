@@ -16,7 +16,11 @@ const mockInteraction = (opts: Record<string, string | number | null> = {}) => (
 
 const mockAdapter = (tunnelService?: any) => ({
   core: {
-    tunnelService,
+    lifecycleManager: {
+      serviceRegistry: {
+        get: vi.fn((key: string) => (key === "tunnel" ? tunnelService : undefined)),
+      },
+    },
     sessionManager: {
       getSessionByThread: vi.fn().mockReturnValue(null),
     },
