@@ -34,7 +34,7 @@ export async function handleNew(
   }
 
   if (agentKeys.length === 1) {
-    await executeNewSession(interaction, adapter, config.defaultAgent, workspace)
+    await executeNewSession(interaction, adapter, agentKeys[0], workspace)
     return
   }
 
@@ -125,7 +125,7 @@ export async function executeNewSession(
 
     // Send welcome message in the new thread
     const controlRow = buildSessionControlKeyboard(session.id, false, false)
-    await thread.send({
+    const controlMsg = await thread.send({
       content:
         `✅ **Session started**\n` +
         `**Agent:** ${session.agentName}\n` +
@@ -133,6 +133,9 @@ export async function executeNewSession(
         `This is your coding session — chat here to work with the agent.`,
       components: [controlRow],
     })
+
+    // Persist control message ID for post-restart button updates
+    await adapter.persistControlMsgId(session.id, controlMsg.id).catch(() => {})
 
     // Reply to the interaction with a link to the thread
     const replyMsg = `✅ Session created → [Open thread](https://discord.com/channels/${adapter.getGuildId()}/${thread.id})`
@@ -172,4 +175,43 @@ export async function handleNewSessionButton(
     try { await interaction.deferUpdate() } catch { /* ignore */ }
     await executeNewSession(interaction, adapter, agentKey, undefined)
   }
+}
+
+/** Show agent picker as a followUp message (used from menu button) */
+export async function showAgentPickerButton(
+  interaction: ButtonInteraction,
+  adapter: DiscordAdapter,
+): Promise<void> {
+  const installedEntries = adapter.core.agentCatalog.getInstalledEntries()
+  const agentKeys = Object.keys(installedEntries)
+  const config = adapter.core.configManager.get()
+
+  if (agentKeys.length === 0) {
+    await interaction.followUp({ content: '❌ No agents installed. Use `/install` to install an agent first.', ephemeral: true })
+    return
+  }
+
+  if (agentKeys.length === 1) {
+    await executeNewSession(interaction, adapter, agentKeys[0], undefined)
+    return
+  }
+
+  // Multiple agents — show picker buttons
+  const row = new ActionRowBuilder<ButtonBuilder>()
+  for (const key of agentKeys) {
+    const agent = installedEntries[key]!
+    const label = key === config.defaultAgent ? `${agent.name} (default)` : agent.name
+    row.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`m:new:agent:${key}`)
+        .setLabel(label)
+        .setStyle(ButtonStyle.Primary),
+    )
+  }
+
+  await interaction.followUp({
+    content: '🆕 **New Session**\nChoose an agent:',
+    components: [row],
+    ephemeral: true,
+  })
 }

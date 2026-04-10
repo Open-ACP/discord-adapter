@@ -37,6 +37,7 @@ import { handleAgents, handleInstall, handleAgentButton } from "./agents.js";
 import { handleDoctor, handleDoctorButton } from "./doctor.js";
 import { handleIntegrate, handleIntegrateButton } from "./integrate.js";
 import { handleSettings, handleSettingsButton } from "./settings.js";
+import { handleTunnel, handleTunnels } from "./tunnel.js";
 
 export async function handleSlashCommand(
   interaction: ChatInputCommandInteraction,
@@ -105,6 +106,12 @@ export async function handleSlashCommand(
         break;
       case "verbosity":
         await handleOutputMode(interaction, adapter);
+        break;
+      case "tunnel":
+        await handleTunnel(interaction, adapter);
+        break;
+      case "tunnels":
+        await handleTunnels(interaction, adapter);
         break;
       default:
         log.warn({ commandName }, "[discord-router] Unknown slash command");

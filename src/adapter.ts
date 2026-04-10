@@ -28,7 +28,7 @@ import type { CommandRegistry } from "@openacp/plugin-sdk";
 import { DiscordRenderer } from "./renderer.js";
 import type { DiscordChannelConfig } from "./types.js";
 import { DiscordDraftManager } from "./draft-manager.js";
-import { ActivityTracker, type ToolCallMeta, type OutputMode } from "./activity.js";
+import { ActivityTracker, type ToolCallMeta, type OutputMode, type TunnelServiceInterface } from "./activity.js";
 import { SkillCommandManager } from "./skill-command-manager.js";
 import { PermissionHandler } from "./permissions.js";
 import {
@@ -43,7 +43,9 @@ import {
   registerSlashCommands,
   handleSlashCommand,
   setupButtonCallbacks,
+  buildMenuKeyboard,
 } from "./commands/index.js";
+import { buildSessionControlKeyboard } from "./commands/admin.js";
 import { spawnAssistant, buildWelcomeMessage } from "./assistant.js";
 import {
   buildFallbackText,
@@ -74,10 +76,13 @@ export class DiscordAdapter extends MessagingAdapter {
   private notificationChannel!: TextChannel;
   private assistantSession: Session | null = null;
   private assistantInitializing = false;
+  private pendingAssistantSystemPrompt: string | null = null;
   private fileService: FileServiceInterface;
 
   // Per-session thread context for concurrency safety in sendMessage handlers
   private _sessionContexts = new Map<string, { thread: ThreadChannel; isAssistant: boolean }>();
+  private _configChangedHandler?: (data: { sessionId: string }) => void;
+  private _threadReadyHandler?: (data: { sessionId: string; channelId: string; threadId: string }) => void;
 
   constructor(core: OpenACPCore, config: DiscordChannelConfig) {
     super(
@@ -165,10 +170,11 @@ export class DiscordAdapter extends MessagingAdapter {
           this.setupInteractionHandler();
           this.setupMessageHandler();
 
-          // Welcome message
+          // Welcome message with menu buttons so users can quickly start sessions
           const welcomeMsg = buildWelcomeMessage(this.core);
+          const menuComponents = buildMenuKeyboard();
           try {
-            await this.notificationChannel.send(welcomeMsg);
+            await this.notificationChannel.send({ content: welcomeMsg, components: menuComponents });
           } catch (err) {
             log.warn(
               { err },
@@ -178,6 +184,43 @@ export class DiscordAdapter extends MessagingAdapter {
 
           // Spawn assistant session
           await this.setupAssistant();
+
+          // Update control message when session config changes via commands
+          this._configChangedHandler = ({ sessionId }) => {
+            this.updateControlMessage(sessionId).catch(() => {});
+          };
+          this.core.eventBus.on('session:configChanged', this._configChangedHandler);
+
+          // Send welcome + control messages for sessions created via API/CLI (not via /new command)
+          this._threadReadyHandler = ({ sessionId, channelId, threadId }) => {
+            if (channelId !== 'discord') return;
+            const session = this.core.sessionManager.getSession(sessionId);
+            if (!session) return;
+            // Assistant manages its own welcome message
+            if (this.assistantSession && sessionId === this.assistantSession.id) return;
+
+            this.guild.channels.fetch(threadId)
+              .then((channel) => {
+                if (!channel || !channel.isThread()) return;
+                const thread = channel as ThreadChannel;
+                return thread.send({ content: '⏳ Setting up session, please wait...' })
+                  .then(() =>
+                    thread.send({
+                      content:
+                        `✅ **Session started**\n` +
+                        `**Agent:** ${session.agentName}\n` +
+                        `**Workspace:** \`${session.workingDirectory}\`\n\n` +
+                        `This is your coding session — chat here to work with the agent.`,
+                      components: [buildSessionControlKeyboard(sessionId, false, false)],
+                    }),
+                  )
+                  .then((controlMsg) => this.persistControlMsgId(sessionId, controlMsg.id));
+              })
+              .catch((err) => {
+                log.warn({ err, sessionId, threadId }, '[DiscordAdapter] Failed to send initial messages for API-created session');
+              });
+          };
+          this.core.eventBus.on('session:threadReady', this._threadReadyHandler);
 
           log.info("[DiscordAdapter] Initialization complete");
           resolve();
@@ -204,6 +247,14 @@ export class DiscordAdapter extends MessagingAdapter {
         );
       }
       this.assistantSession = null;
+    }
+    if (this._configChangedHandler) {
+      this.core.eventBus.off('session:configChanged', this._configChangedHandler);
+      this._configChangedHandler = undefined;
+    }
+    if (this._threadReadyHandler) {
+      this.core.eventBus.off('session:threadReady', this._threadReadyHandler);
+      this._threadReadyHandler = undefined;
     }
     this.client.destroy();
     log.info("[DiscordAdapter] Stopped");
@@ -472,8 +523,13 @@ export class DiscordAdapter extends MessagingAdapter {
           threadId === this.discordConfig.assistantThreadId
         ) {
           if (this.assistantSession && text) {
+            let promptText = text;
+            if (this.pendingAssistantSystemPrompt) {
+              promptText = `${this.pendingAssistantSystemPrompt}\n\n---\n\nUser message:\n${text}`;
+              this.pendingAssistantSystemPrompt = null;
+            }
             await this.assistantSession.enqueuePrompt(
-              text,
+              promptText,
               attachments.length > 0 ? attachments : undefined,
             );
           }
@@ -549,11 +605,10 @@ export class DiscordAdapter extends MessagingAdapter {
 
     this.assistantInitializing = true;
     try {
-      const { session, ready } = await spawnAssistant(this.core, threadId);
+      const { session, pendingSystemPrompt } = await spawnAssistant(this.core, threadId);
       this.assistantSession = session;
-      ready.finally(() => {
-        this.assistantInitializing = false;
-      });
+      this.pendingAssistantSystemPrompt = pendingSystemPrompt;
+      this.assistantInitializing = false;
     } catch (err) {
       this.assistantInitializing = false;
       log.error({ err }, "[DiscordAdapter] Failed to spawn assistant");
@@ -681,11 +736,18 @@ export class DiscordAdapter extends MessagingAdapter {
   ): ActivityTracker {
     let tracker = this.sessionTrackers.get(sessionId);
     if (!tracker) {
+      const tunnelService = this.core.lifecycleManager?.serviceRegistry?.get("tunnel") as TunnelServiceInterface | undefined;
+      const session = this.core.sessionManager.getSession(sessionId);
+      const sessionContext = session
+        ? { id: sessionId, workingDirectory: session.workingDirectory }
+        : undefined;
       tracker = new ActivityTracker(
         thread,
         this.sendQueue,
         outputMode,
         sessionId,
+        tunnelService,
+        sessionContext,
       );
       this.sessionTrackers.set(sessionId, tracker);
     } else {
@@ -700,6 +762,34 @@ export class DiscordAdapter extends MessagingAdapter {
     if (!tracker) return;
     tracker.setOutputMode(mode);
     tracker.rerender();
+  }
+
+  /**
+   * Edit the control message to reflect current session state (bypass, voice mode).
+   * No-op if the control message ID is unknown (session created before this fix).
+   */
+  async updateControlMessage(sessionId: string): Promise<void> {
+    const controlMsgId = this.getControlMsgId(sessionId);
+    if (!controlMsgId) return;
+
+    const thread = await this.getThread(sessionId);
+    if (!thread) return;
+
+    const session = this.core.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const keyboard = buildSessionControlKeyboard(
+      sessionId,
+      session.clientOverrides?.bypassPermissions ?? false,
+      session.voiceMode === 'on',
+    );
+
+    try {
+      const msg = await thread.messages.fetch(controlMsgId);
+      await msg.edit({ components: [keyboard] });
+    } catch {
+      // Message deleted or inaccessible — ignore
+    }
   }
 
   private getSessionContext(sessionId: string): { thread: ThreadChannel; isAssistant: boolean } {
@@ -861,6 +951,10 @@ export class DiscordAdapter extends MessagingAdapter {
         /* best effort */
       }
     }
+  }
+
+  protected async handleConfigUpdate(sessionId: string, _content: OutgoingMessage): Promise<void> {
+    await this.updateControlMessage(sessionId);
   }
 
   protected async handleError(sessionId: string, content: OutgoingMessage): Promise<void> {
@@ -1087,6 +1181,29 @@ export class DiscordAdapter extends MessagingAdapter {
 
   getAssistantThreadId(): string | null {
     return this.discordConfig.assistantThreadId;
+  }
+
+  /**
+   * Persist the control message ID to the session record so it survives restart.
+   * Called after sending the welcome/control message in new-session.ts.
+   */
+  async persistControlMsgId(sessionId: string, messageId: string): Promise<void> {
+    const record = this.core.sessionManager.getSessionRecord(sessionId);
+    if (!record) return;
+    await this.core.sessionManager.patchRecord(sessionId, {
+      platform: { ...(record.platform ?? {}), controlMsgId: messageId },
+    }).catch((err) => {
+      log.warn({ err, sessionId }, "[DiscordAdapter] Failed to persist controlMsgId");
+    });
+  }
+
+  /**
+   * Retrieve stored control message ID for a session (survives restart via session record).
+   */
+  getControlMsgId(sessionId: string): string | undefined {
+    const record = this.core.sessionManager.getSessionRecord(sessionId);
+    const platform = record?.platform as { controlMsgId?: string } | undefined;
+    return platform?.controlMsgId;
   }
 }
 

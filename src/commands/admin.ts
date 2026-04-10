@@ -30,8 +30,8 @@ export async function handleDangerous(
     );
 
     const msg = session.clientOverrides.bypassPermissions
-      ? "☠️ **Bypass enabled** — all permission requests will be auto-approved. The agent can run any action without asking."
-      : "🔐 **Bypass disabled** — you will be asked to approve risky actions.";
+      ? "☠️ **Bypass Permissions enabled** — all permission requests will be auto-approved. The agent can run any action without asking."
+      : "🔐 **Bypass Permissions disabled** — you will be asked to approve risky actions.";
     await interaction.editReply(msg);
     return;
   }
@@ -57,8 +57,8 @@ export async function handleDangerous(
   );
 
   const msg = newBypass
-    ? "☠️ **Bypass enabled** — all permission requests will be auto-approved. The agent can run any action without asking."
-    : "🔐 **Bypass disabled** — you will be asked to approve risky actions.";
+    ? "☠️ **Bypass Permissions enabled** — all permission requests will be auto-approved. The agent can run any action without asking."
+    : "🔐 **Bypass Permissions disabled** — you will be asked to approve risky actions.";
   await interaction.editReply(msg);
 }
 
@@ -82,8 +82,8 @@ export async function handleDangerousButton(
     );
 
     const toastText = session.clientOverrides.bypassPermissions
-      ? "☠️ Bypass enabled — permissions auto-approved"
-      : "🔐 Bypass disabled — approvals required";
+      ? "☠️ Bypass Permissions enabled — permissions auto-approved"
+      : "🔐 Bypass Permissions disabled — approvals required";
 
     try {
       await interaction.update({
@@ -128,8 +128,8 @@ export async function handleDangerousButton(
   );
 
   const toastText = newBypass
-    ? "☠️ Bypass enabled — permissions auto-approved"
-    : "🔐 Bypass disabled — approvals required";
+    ? "☠️ Bypass Permissions enabled — permissions auto-approved"
+    : "🔐 Bypass Permissions disabled — approvals required";
 
   try {
     // Store-only path: voiceMode unknown, default to off
@@ -161,8 +161,8 @@ export function buildSessionControlKeyboard(
       .setCustomId(`d:${sessionId}`)
       .setLabel(
         dangerousMode
-          ? "🔐 Disable Bypass"
-          : "☠️ Enable Bypass",
+          ? "🔐 Disable Bypass Permissions"
+          : "☠️ Enable Bypass Permissions",
       )
       .setStyle(dangerousMode ? ButtonStyle.Secondary : ButtonStyle.Danger),
     new ButtonBuilder()

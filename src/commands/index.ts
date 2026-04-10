@@ -75,6 +75,37 @@ export const SLASH_COMMANDS = [
     ),
 
   new SlashCommandBuilder()
+    .setName("switch")
+    .setDescription("Switch to a different agent for this session")
+    .addStringOption((o) =>
+      o
+        .setName("agent")
+        .setDescription("Agent name to switch to (omit to see menu)")
+        .setRequired(false),
+    ),
+
+  new SlashCommandBuilder()
+    .setName("tunnel")
+    .setDescription("Create or stop a port tunnel")
+    .addIntegerOption((o) =>
+      o.setName("port").setDescription("Local port to tunnel").setRequired(false),
+    )
+    .addStringOption((o) =>
+      o
+        .setName("action")
+        .setDescription("Action to perform")
+        .setRequired(false)
+        .addChoices({ name: "stop", value: "stop" }),
+    )
+    .addStringOption((o) =>
+      o.setName("label").setDescription("Optional label for this tunnel").setRequired(false),
+    ),
+
+  new SlashCommandBuilder()
+    .setName("tunnels")
+    .setDescription("List active port tunnels"),
+
+  new SlashCommandBuilder()
     .setName("bypass")
     .setDescription("Auto-approve all permission requests (skip confirmations)"),
 
@@ -174,3 +205,4 @@ export async function registerSlashCommands(guild: Guild): Promise<void> {
 }
 
 export { handleSlashCommand, setupButtonCallbacks } from "./router.js";
+export { buildMenuKeyboard } from "./menu.js";

@@ -39,37 +39,42 @@ export async function handleMenu(
   })
 }
 
+function buildHelpContent(): string {
+  return (
+    `📖 **OpenACP Help**\n\n` +
+    `🚀 **Getting Started**\n` +
+    `Use 🆕 New Session or \`/new\` to start coding with AI.\n` +
+    `Each session gets its own forum thread — chat there to work with the agent.\n\n` +
+    `💡 **Common Commands**\n` +
+    `\`/new [agent] [workspace]\` — Create new session\n` +
+    `\`/newchat\` — New chat, same agent & workspace\n` +
+    `\`/cancel\` — Cancel current session\n` +
+    `\`/status\` — Show session or system status\n` +
+    `\`/sessions\` — List all sessions\n` +
+    `\`/agents\` — Browse & install agents\n` +
+    `\`/install <name>\` — Install an agent\n\n` +
+    `⚙️ **System**\n` +
+    `\`/restart\` — Restart OpenACP\n` +
+    `\`/update\` — Update to latest version\n` +
+    `\`/integrate\` — Manage agent integrations\n` +
+    `\`/settings\` — View configuration\n` +
+    `\`/menu\` — Show action menu\n\n` +
+    `🔒 **Session Options**\n` +
+    `\`/bypass\` — Toggle bypass permissions (auto-approve permissions)\n` +
+    `\`/tts\` — Toggle Text to Speech (on/off/next message)\n` +
+    `\`/handoff\` — Continue session in your terminal\n` +
+    `\`/clear\` — Clear assistant session history\n\n` +
+    `🩺 **Diagnostics**\n` +
+    `\`/doctor\` — Run system diagnostics`
+  )
+}
+
 export async function handleHelp(
   interaction: ChatInputCommandInteraction,
   _adapter: DiscordAdapter,
 ): Promise<void> {
   await interaction.reply({
-    content:
-      `📖 **OpenACP Help**\n\n` +
-      `🚀 **Getting Started**\n` +
-      `Use 🆕 New Session or \`/new\` to start coding with AI.\n` +
-      `Each session gets its own forum thread — chat there to work with the agent.\n\n` +
-      `💡 **Common Commands**\n` +
-      `\`/new [agent] [workspace]\` — Create new session\n` +
-      `\`/newchat\` — New chat, same agent & workspace\n` +
-      `\`/cancel\` — Cancel current session\n` +
-      `\`/status\` — Show session or system status\n` +
-      `\`/sessions\` — List all sessions\n` +
-      `\`/agents\` — Browse & install agents\n` +
-      `\`/install <name>\` — Install an agent\n\n` +
-      `⚙️ **System**\n` +
-      `\`/restart\` — Restart OpenACP\n` +
-      `\`/update\` — Update to latest version\n` +
-      `\`/integrate\` — Manage agent integrations\n` +
-      `\`/settings\` — View configuration\n` +
-      `\`/menu\` — Show action menu\n\n` +
-      `🔒 **Session Options**\n` +
-      `\`/bypass\` — Toggle bypass permissions (auto-approve permissions)\n` +
-      `\`/tts\` — Toggle Text to Speech (on/off/next message)\n` +
-      `\`/handoff\` — Continue session in your terminal\n` +
-      `\`/clear\` — Clear assistant session history\n\n` +
-      `🩺 **Diagnostics**\n` +
-      `\`/doctor\` — Run system diagnostics`,
+    content: buildHelpContent(),
     ephemeral: true,
   })
 }
@@ -107,17 +112,13 @@ export async function handleMenuButton(
   try {
     switch (customId) {
       case 'm:new': {
-        // Delegate to new-session handler
-        const { handleNew } = await import('./new-session.js')
-        // Create a fake slash command interaction proxy for the button context
-        // We just show the menu inline instead
-        await interaction.followUp({ content: 'Use `/new` to create a new session.', ephemeral: true })
+        const { showAgentPickerButton } = await import('./new-session.js')
+        await showAgentPickerButton(interaction, adapter)
         break
       }
       case 'm:sessions': {
-        const { handleSessions } = await import('./session.js')
-        // Use followUp to show the sessions list
-        await showSessionsList(interaction, adapter)
+        const { showSessionsListButton } = await import('./session.js')
+        await showSessionsListButton(interaction, adapter)
         break
       }
       case 'm:status': {
@@ -154,7 +155,7 @@ export async function handleMenuButton(
         break
       }
       case 'm:help': {
-        await interaction.followUp({ content: 'Use `/help` for command reference.', ephemeral: true })
+        await interaction.followUp({ content: buildHelpContent(), ephemeral: true })
         break
       }
       case 'm:doctor': {
@@ -200,34 +201,3 @@ async function showGlobalStatus(interaction: ButtonInteraction, adapter: Discord
   })
 }
 
-async function showSessionsList(interaction: ButtonInteraction, adapter: DiscordAdapter): Promise<void> {
-  const allRecords = adapter.core.sessionManager.listRecords()
-  if (allRecords.length === 0) {
-    await interaction.followUp({ content: 'No sessions found.', ephemeral: true })
-    return
-  }
-
-  const STATUS_EMOJI: Record<string, string> = {
-    active: '🟢', initializing: '🟡', finished: '✅', error: '❌', cancelled: '⛔',
-  }
-  const STATUS_ORDER: Record<string, number> = {
-    active: 0, initializing: 1, error: 2, finished: 3, cancelled: 4,
-  }
-
-  allRecords.sort(
-    (a: any, b: any) => (STATUS_ORDER[a.status] ?? 5) - (STATUS_ORDER[b.status] ?? 5),
-  )
-
-  const lines = allRecords.slice(0, 20).map((r: any) => {
-    const emoji = STATUS_EMOJI[r.status] || '⚪'
-    const name = r.name?.trim() || `${r.agentName} session`
-    return `${emoji} **${name}** \`[${r.status}]\``
-  })
-
-  const truncated = allRecords.length > 20 ? `\n\n*...and ${allRecords.length - 20} more*` : ''
-
-  await interaction.followUp({
-    content: `**Sessions: ${allRecords.length}**\n\n${lines.join('\n')}${truncated}`,
-    ephemeral: true,
-  })
-}
