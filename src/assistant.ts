@@ -19,11 +19,17 @@ export async function spawnAssistant(
 ): Promise<SpawnAssistantResult> {
   const config = core.configManager.get()
 
-  // Look for an existing assistant session to resume, so conversation history is preserved on restart.
-  // Match by name 'Assistant' + discord channel, excluding definitively-terminal states.
-  const existingRecord = core.sessionManager.listRecords().find(
-    (r) => r.channelId === 'discord' && r.name === 'Assistant' && r.status !== 'finished' && r.status !== 'error'
-  )
+  // Look for the most recent resumable assistant session to preserve conversation history on restart.
+  // Exclude terminal states (finished, error) and explicitly-cleared sessions (cancelled).
+  const existingRecord = core.sessionManager.listRecords()
+    .filter(
+      (r) => r.channelId === 'discord' &&
+             r.name === 'Assistant' &&
+             r.status !== 'finished' &&
+             r.status !== 'error' &&
+             r.status !== 'cancelled'
+    )
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
   const existingSessionId = existingRecord?.sessionId
 
   log.info({ agent: config.defaultAgent, threadId, existingSessionId }, '[discord-assistant] Creating assistant session...')
