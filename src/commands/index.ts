@@ -205,3 +205,4 @@ export async function registerSlashCommands(guild: Guild): Promise<void> {
 }
 
 export { handleSlashCommand, setupButtonCallbacks } from "./router.js";
+export { buildMenuKeyboard } from "./menu.js";

@@ -43,6 +43,7 @@ import {
   registerSlashCommands,
   handleSlashCommand,
   setupButtonCallbacks,
+  buildMenuKeyboard,
 } from "./commands/index.js";
 import { buildSessionControlKeyboard } from "./commands/admin.js";
 import { spawnAssistant, buildWelcomeMessage } from "./assistant.js";
@@ -169,10 +170,11 @@ export class DiscordAdapter extends MessagingAdapter {
           this.setupInteractionHandler();
           this.setupMessageHandler();
 
-          // Welcome message
+          // Welcome message with menu buttons so users can quickly start sessions
           const welcomeMsg = buildWelcomeMessage(this.core);
+          const menuComponents = buildMenuKeyboard();
           try {
-            await this.notificationChannel.send(welcomeMsg);
+            await this.notificationChannel.send({ content: welcomeMsg, components: menuComponents });
           } catch (err) {
             log.warn(
               { err },
