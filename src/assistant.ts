@@ -19,17 +19,25 @@ export async function spawnAssistant(
 ): Promise<SpawnAssistantResult> {
   const config = core.configManager.get()
 
-  log.info({ agent: config.defaultAgent, threadId }, '[discord-assistant] Creating assistant session...')
+  // Look for an existing assistant session to resume, so conversation history is preserved on restart.
+  // Match by name 'Assistant' + discord channel, excluding definitively-terminal states.
+  const existingRecord = core.sessionManager.listRecords().find(
+    (r) => r.channelId === 'discord' && r.name === 'Assistant' && r.status !== 'finished' && r.status !== 'error'
+  )
+  const existingSessionId = existingRecord?.sessionId
+
+  log.info({ agent: config.defaultAgent, threadId, existingSessionId }, '[discord-assistant] Creating assistant session...')
 
   const session = await core.createSession({
     channelId: 'discord',
     agentName: config.defaultAgent,
     workingDirectory: core.configManager.resolveWorkspace(),
     initialName: 'Assistant',
+    existingSessionId,
   })
   session.threadId = threadId
 
-  log.info({ sessionId: session.id, threadId }, '[discord-assistant] Assistant spawned (system prompt deferred)')
+  log.info({ sessionId: session.id, threadId, resumed: !!existingSessionId }, '[discord-assistant] Assistant spawned (system prompt deferred)')
 
   const pendingSystemPrompt = buildAssistantSystemPrompt(core)
 
