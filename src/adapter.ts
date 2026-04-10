@@ -44,6 +44,7 @@ import {
   handleSlashCommand,
   setupButtonCallbacks,
 } from "./commands/index.js";
+import { buildSessionControlKeyboard } from "./commands/admin.js";
 import { spawnAssistant, buildWelcomeMessage } from "./assistant.js";
 import {
   buildFallbackText,
@@ -79,6 +80,7 @@ export class DiscordAdapter extends MessagingAdapter {
 
   // Per-session thread context for concurrency safety in sendMessage handlers
   private _sessionContexts = new Map<string, { thread: ThreadChannel; isAssistant: boolean }>();
+  private _configChangedHandler?: (data: { sessionId: string }) => void;
 
   constructor(core: OpenACPCore, config: DiscordChannelConfig) {
     super(
@@ -180,6 +182,12 @@ export class DiscordAdapter extends MessagingAdapter {
           // Spawn assistant session
           await this.setupAssistant();
 
+          // Update control message when session config changes via commands
+          this._configChangedHandler = ({ sessionId }) => {
+            this.updateControlMessage(sessionId).catch(() => {});
+          };
+          this.core.eventBus.on('session:configChanged', this._configChangedHandler);
+
           log.info("[DiscordAdapter] Initialization complete");
           resolve();
         } catch (err) {
@@ -205,6 +213,10 @@ export class DiscordAdapter extends MessagingAdapter {
         );
       }
       this.assistantSession = null;
+    }
+    if (this._configChangedHandler) {
+      this.core.eventBus.off('session:configChanged', this._configChangedHandler);
+      this._configChangedHandler = undefined;
     }
     this.client.destroy();
     log.info("[DiscordAdapter] Stopped");
@@ -714,6 +726,34 @@ export class DiscordAdapter extends MessagingAdapter {
     tracker.rerender();
   }
 
+  /**
+   * Edit the control message to reflect current session state (bypass, voice mode).
+   * No-op if the control message ID is unknown (session created before this fix).
+   */
+  async updateControlMessage(sessionId: string): Promise<void> {
+    const controlMsgId = this.getControlMsgId(sessionId);
+    if (!controlMsgId) return;
+
+    const thread = await this.getThread(sessionId);
+    if (!thread) return;
+
+    const session = this.core.sessionManager.getSession(sessionId);
+    if (!session) return;
+
+    const keyboard = buildSessionControlKeyboard(
+      sessionId,
+      session.clientOverrides?.bypassPermissions ?? false,
+      session.voiceMode === 'on',
+    );
+
+    try {
+      const msg = await thread.messages.fetch(controlMsgId);
+      await msg.edit({ components: [keyboard] });
+    } catch {
+      // Message deleted or inaccessible — ignore
+    }
+  }
+
   private getSessionContext(sessionId: string): { thread: ThreadChannel; isAssistant: boolean } {
     const ctx = this._sessionContexts.get(sessionId);
     if (!ctx) {
@@ -873,6 +913,10 @@ export class DiscordAdapter extends MessagingAdapter {
         /* best effort */
       }
     }
+  }
+
+  protected async handleConfigUpdate(sessionId: string, _content: OutgoingMessage): Promise<void> {
+    await this.updateControlMessage(sessionId);
   }
 
   protected async handleError(sessionId: string, content: OutgoingMessage): Promise<void> {
