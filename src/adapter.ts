@@ -386,6 +386,16 @@ export class DiscordAdapter extends MessagingAdapter {
       case "text":
         await reply({ content: response.text });
         break;
+      case "adaptive": {
+        const variant = response.variants?.['discord'] as
+          | { content?: string; embeds?: unknown[] }
+          | undefined;
+        await reply({
+          content: variant?.content ?? response.fallback,
+          ...(variant?.embeds && { embeds: variant.embeds }),
+        });
+        break;
+      }
       case "error":
         await reply({ content: `\u26a0\ufe0f ${response.message}`, ephemeral: true });
         break;
