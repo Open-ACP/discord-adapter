@@ -316,10 +316,10 @@ export async function showSessionsListButton(
   try {
     const allRecords = adapter.core.sessionManager.listRecords()
 
-    // Only show sessions with a Discord thread
+    // Only show sessions that have a Discord thread (threadId is current; topicId is legacy)
     const records = allRecords.filter((r: any) => {
-      const platform = r.platform as { topicId?: string | number }
-      return !!platform?.topicId
+      const platform = r.platform as { threadId?: string; topicId?: string | number }
+      return !!(platform?.threadId ?? platform?.topicId)
     })
     const headlessCount = allRecords.length - records.length
 
