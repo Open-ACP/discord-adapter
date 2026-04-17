@@ -7,8 +7,6 @@ import { log } from '@openacp/plugin-sdk'
 /**
  * Ensures both the forum channel and notification channel exist.
  * Creates them if their IDs are null, then persists the IDs via saveConfig.
- *
- * saveConfig uses nested object path: { channels: { discord: { forumChannelId: ... } } }
  */
 export async function ensureForums(
   guild: Guild,
@@ -16,7 +14,7 @@ export async function ensureForums(
     forumChannelId: string | null
     notificationChannelId: string | null
   },
-  saveConfig: (updates: Record<string, unknown>) => Promise<void>,
+  saveConfig: (key: 'forumChannelId' | 'notificationChannelId', value: string) => Promise<void>,
 ): Promise<{ forumChannel: ForumChannel | TextChannel; notificationChannel: TextChannel }> {
   let forumChannelId = config.forumChannelId
   let notificationChannelId = config.notificationChannelId
@@ -52,7 +50,7 @@ export async function ensureForums(
       forumChannel = channel as TextChannel
       log.info({ forumChannelId: channel.id }, '[forums] Created text channel (Community mode not enabled, using threads fallback)')
     }
-    await saveConfig({ channels: { discord: { forumChannelId: forumChannel.id } } })
+    await saveConfig('forumChannelId', forumChannel.id)
   }
 
   // Ensure notification channel exists — fetch existing or create new
@@ -75,7 +73,7 @@ export async function ensureForums(
       type: ChannelType.GuildText,
     })
     notificationChannel = channel as TextChannel
-    await saveConfig({ channels: { discord: { notificationChannelId: channel.id } } })
+    await saveConfig('notificationChannelId', channel.id)
     log.info({ notificationChannelId: channel.id }, '[forums] Created notification channel')
   }
 

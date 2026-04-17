@@ -150,26 +150,24 @@ function createDiscordPlugin(): OpenACPPlugin {
         return
       }
 
-      // Migrate displayVerbosity → outputMode (backward compat)
       const core = ctx.core as OpenACPCore
-      const fullConfig = core.configManager.get() as Record<string, any>
-      const discordChannel = (fullConfig.channels?.discord ?? {}) as Record<string, unknown>
-      if (discordChannel.displayVerbosity && !discordChannel.outputMode) {
-        await core.configManager.save(
-          { channels: { discord: { outputMode: discordChannel.displayVerbosity } } },
-          'channels.discord.outputMode',
-        )
-        ctx.log.info('Migrated config channels.discord.displayVerbosity → outputMode')
+      // Create a SettingsAPI scoped to this plugin so the adapter can persist
+      // channel IDs and other runtime state to plugin settings instead of core config.
+      const settingsAPI = (core as any).settingsManager?.createAPI(ctx.pluginName)
+      if (!settingsAPI) {
+        ctx.log.warn('SettingsManager not available — plugin settings will not persist')
       }
 
       const { DiscordAdapter } = await import('./adapter.js')
-      // config is a Record<string, unknown> from pluginConfig; at runtime it
-      // contains all DiscordChannelConfig fields populated from the migrated config.
-      adapter = new DiscordAdapter(ctx.core as OpenACPCore, {
-        ...config,
-        enabled: true,
-        maxMessageLength: 2000,
-      } as unknown as DiscordChannelConfig)
+      adapter = new DiscordAdapter(
+        core,
+        {
+          ...config,
+          enabled: true,
+          maxMessageLength: 2000,
+        } as unknown as DiscordChannelConfig,
+        settingsAPI,
+      )
 
       ctx.registerService('adapter:discord', adapter)
       ctx.log.info('Discord adapter registered')

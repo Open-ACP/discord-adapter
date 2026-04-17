@@ -15,6 +15,7 @@ export interface DiscordChannelConfig {
   forumChannelId: string | null
   notificationChannelId: string | null
   assistantThreadId: string | null
+  outputMode?: 'low' | 'medium' | 'high'
   [key: string]: unknown
 }
 

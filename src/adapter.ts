@@ -22,6 +22,7 @@ import type {
   MessagingAdapterConfig,
   FileServiceInterface,
   CommandResponse,
+  SettingsAPI,
 } from "@openacp/plugin-sdk";
 import { log, MessagingAdapter, SendQueue } from "@openacp/plugin-sdk";
 import type { CommandRegistry } from "@openacp/plugin-sdk";
@@ -64,6 +65,7 @@ export class DiscordAdapter extends MessagingAdapter {
   readonly core: OpenACPCore;
   private client: Client;
   private discordConfig: DiscordChannelConfig;
+  private settingsAPI: SettingsAPI | undefined;
   private sendQueue: SendQueue;
   private draftManager: DiscordDraftManager;
   private _outputModeResolver = new OutputModeResolver();
@@ -84,13 +86,14 @@ export class DiscordAdapter extends MessagingAdapter {
   private _configChangedHandler?: (data: { sessionId: string }) => void;
   private _threadReadyHandler?: (data: { sessionId: string; channelId: string; threadId: string }) => void;
 
-  constructor(core: OpenACPCore, config: DiscordChannelConfig) {
+  constructor(core: OpenACPCore, config: DiscordChannelConfig, settingsAPI: SettingsAPI | undefined) {
     super(
       { configManager: core.configManager },
       { ...config as Record<string, unknown>, maxMessageLength: 2000, enabled: config.enabled ?? true } as MessagingAdapterConfig,
     );
     this.core = core;
     this.discordConfig = config;
+    this.settingsAPI = settingsAPI;
 
     this.client = new Client({
       intents: [
@@ -112,6 +115,31 @@ export class DiscordAdapter extends MessagingAdapter {
       );
       this.sendQueue.onRateLimited();
     });
+  }
+
+  // ─── Plugin settings helpers ──────────────────────────────────────────────
+
+  /**
+   * Persists a plugin setting to disk and updates the in-memory config so
+   * subsequent reads within the same session see the new value immediately.
+   */
+  async savePluginSetting(key: string, value: unknown): Promise<void> {
+    if (this.settingsAPI) {
+      if (value === undefined) {
+        await this.settingsAPI.delete(key)
+      } else {
+        await this.settingsAPI.set(key, value)
+      }
+    }
+    // Keep in-memory config in sync so callers don't need a restart to see the change.
+    (this.discordConfig as Record<string, unknown>)[key] = value
+  }
+
+  /** Returns the adapter-level output mode from plugin settings, or undefined if not set. */
+  get adapterOutputMode(): OutputMode | undefined {
+    const v = this.discordConfig.outputMode
+    if (v === 'low' || v === 'medium' || v === 'high') return v as OutputMode
+    return undefined
   }
 
   // ─── start ────────────────────────────────────────────────────────────────
@@ -137,17 +165,13 @@ export class DiscordAdapter extends MessagingAdapter {
           this.guild = guild;
 
           // Ensure forum + notification channels exist
-          const saveConfig = (updates: Record<string, unknown>) =>
-            this.core.configManager.save(
-              updates as Parameters<typeof this.core.configManager.save>[0],
-            );
           const { forumChannel, notificationChannel } = await ensureForums(
             guild,
             {
               forumChannelId: this.discordConfig.forumChannelId,
               notificationChannelId: this.discordConfig.notificationChannelId,
             },
-            saveConfig,
+            (key, value) => this.savePluginSetting(key, value),
           );
           this.forumChannel = forumChannel;
           this.notificationChannel = notificationChannel;
@@ -607,9 +631,7 @@ export class DiscordAdapter extends MessagingAdapter {
       // Create a new thread for the assistant
       const thread = await forumsCreateThread(this.forumChannel, "Assistant");
       threadId = thread.id;
-      await this.core.configManager.save({
-        channels: { discord: { assistantThreadId: thread.id } },
-      } as Parameters<typeof this.core.configManager.save>[0]);
+      await this.savePluginSetting('assistantThreadId', thread.id)
       log.info({ threadId }, "[DiscordAdapter] Created assistant thread");
     }
 
@@ -732,8 +754,8 @@ export class DiscordAdapter extends MessagingAdapter {
 
   private resolveMode(sessionId: string): OutputMode {
     return this._outputModeResolver.resolve(
+      this.discordConfig,
       this.core.configManager as any,
-      this.name,
       sessionId,
       this.core.sessionManager as any,
     );
@@ -1223,8 +1245,9 @@ export class DiscordAdapter extends MessagingAdapter {
 
 class OutputModeResolver {
   resolve(
+    // Adapter-level setting comes from plugin settings (discordConfig), not legacy core config.
+    discordConfig: { outputMode?: unknown },
     configManager: { get(): Record<string, unknown> },
-    adapterName: string,
     sessionId?: string,
     sessionManager?: { getSession(id: string): { record?: { outputMode?: string } } | undefined },
   ): OutputMode {
@@ -1234,14 +1257,11 @@ class OutputModeResolver {
       const mode = session?.record?.outputMode;
       if (mode === "low" || mode === "medium" || mode === "high") return mode;
     }
-    // Level 2: Adapter override
-    const config = configManager.get();
-    const channels = config.channels as Record<string, Record<string, unknown>> | undefined;
-    const adapterConfig = channels?.[adapterName];
-    const adapterMode = adapterConfig?.outputMode;
+    // Level 2: Adapter override (from plugin settings)
+    const adapterMode = discordConfig.outputMode;
     if (adapterMode === "low" || adapterMode === "medium" || adapterMode === "high") return adapterMode as OutputMode;
-    // Level 1: Global default
-    const globalMode = config.outputMode;
+    // Level 1: Global default (from core config)
+    const globalMode = configManager.get().outputMode;
     if (globalMode === "low" || globalMode === "medium" || globalMode === "high") return globalMode as OutputMode;
     return "medium";
   }
