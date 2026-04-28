@@ -78,19 +78,25 @@ export class DiscordAdapter extends MessagingAdapter {
   private assistantInitializing = false;
   private pendingAssistantSystemPrompt: string | null = null;
   private fileService: FileServiceInterface;
+  private saveChannelIds?: (updates: { forumChannelId?: string; notificationChannelId?: string; assistantThreadId?: string }) => Promise<void>;
 
   // Per-session thread context for concurrency safety in sendMessage handlers
   private _sessionContexts = new Map<string, { thread: ThreadChannel; isAssistant: boolean }>();
   private _configChangedHandler?: (data: { sessionId: string }) => void;
   private _threadReadyHandler?: (data: { sessionId: string; channelId: string; threadId: string }) => void;
 
-  constructor(core: OpenACPCore, config: DiscordChannelConfig) {
+  constructor(
+    core: OpenACPCore,
+    config: DiscordChannelConfig,
+    saveChannelIds?: (updates: { forumChannelId?: string; notificationChannelId?: string; assistantThreadId?: string }) => Promise<void>,
+  ) {
     super(
       { configManager: core.configManager },
       { ...config as Record<string, unknown>, maxMessageLength: 2000, enabled: config.enabled ?? true } as MessagingAdapterConfig,
     );
     this.core = core;
     this.discordConfig = config;
+    this.saveChannelIds = saveChannelIds;
 
     this.client = new Client({
       intents: [
@@ -137,10 +143,14 @@ export class DiscordAdapter extends MessagingAdapter {
           this.guild = guild;
 
           // Ensure forum + notification channels exist
-          const saveConfig = (updates: Record<string, unknown>) =>
-            this.core.configManager.save(
-              updates as Parameters<typeof this.core.configManager.save>[0],
-            );
+          const saveConfig = async (updates: { forumChannelId?: string; notificationChannelId?: string }) => {
+            if (this.saveChannelIds) {
+              await this.saveChannelIds(updates);
+            } else {
+              // Fallback for legacy usage without plugin settings
+              await this.core.configManager.save({ channels: { discord: updates } } as Parameters<typeof this.core.configManager.save>[0]);
+            }
+          };
           const { forumChannel, notificationChannel } = await ensureForums(
             guild,
             {
@@ -607,9 +617,14 @@ export class DiscordAdapter extends MessagingAdapter {
       // Create a new thread for the assistant
       const thread = await forumsCreateThread(this.forumChannel, "Assistant");
       threadId = thread.id;
-      await this.core.configManager.save({
-        channels: { discord: { assistantThreadId: thread.id } },
-      } as Parameters<typeof this.core.configManager.save>[0]);
+      if (this.saveChannelIds) {
+        await this.saveChannelIds({ assistantThreadId: thread.id });
+      } else {
+        // Fallback for legacy usage without plugin settings
+        await this.core.configManager.save({
+          channels: { discord: { assistantThreadId: thread.id } },
+        } as Parameters<typeof this.core.configManager.save>[0]);
+      }
       log.info({ threadId }, "[DiscordAdapter] Created assistant thread");
     }
 

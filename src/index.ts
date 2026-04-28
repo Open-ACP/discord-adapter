@@ -150,8 +150,10 @@ function createDiscordPlugin(): OpenACPPlugin {
         return
       }
 
-      // Migrate displayVerbosity → outputMode (backward compat)
       const core = ctx.core as OpenACPCore
+      const settingsManager = core.lifecycleManager?.settingsManager
+
+      // Migrate displayVerbosity → outputMode (backward compat)
       const fullConfig = core.configManager.get() as Record<string, any>
       const discordChannel = (fullConfig.channels?.discord ?? {}) as Record<string, unknown>
       if (discordChannel.displayVerbosity && !discordChannel.outputMode) {
@@ -162,6 +164,29 @@ function createDiscordPlugin(): OpenACPPlugin {
         ctx.log.info('Migrated config channels.discord.displayVerbosity → outputMode')
       }
 
+      // If channel IDs are null in plugin settings but present in main config, migrate them.
+      // This handles users who ran a version where ensureForums saved to main config instead of plugin settings.
+      if ((config.forumChannelId == null || config.notificationChannelId == null) && settingsManager) {
+        const legacy = discordChannel
+        const migrated: Record<string, unknown> = {}
+        if (legacy.forumChannelId != null && config.forumChannelId == null) {
+          config.forumChannelId = legacy.forumChannelId
+          migrated.forumChannelId = legacy.forumChannelId
+        }
+        if (legacy.notificationChannelId != null && config.notificationChannelId == null) {
+          config.notificationChannelId = legacy.notificationChannelId
+          migrated.notificationChannelId = legacy.notificationChannelId
+        }
+        if (legacy.assistantThreadId != null && config.assistantThreadId == null) {
+          config.assistantThreadId = legacy.assistantThreadId
+          migrated.assistantThreadId = legacy.assistantThreadId
+        }
+        if (Object.keys(migrated).length > 0) {
+          await settingsManager.updatePluginSettings(ctx.pluginName, migrated)
+          ctx.log.info('Migrated channel IDs from main config to plugin settings')
+        }
+      }
+
       const { DiscordAdapter } = await import('./adapter.js')
       // config is a Record<string, unknown> from pluginConfig; at runtime it
       // contains all DiscordChannelConfig fields populated from the migrated config.
@@ -169,7 +194,12 @@ function createDiscordPlugin(): OpenACPPlugin {
         ...config,
         enabled: true,
         maxMessageLength: 2000,
-      } as unknown as DiscordChannelConfig)
+      } as unknown as DiscordChannelConfig, async (updates) => {
+        // Save channel IDs to plugin settings so they persist across restarts
+        if (settingsManager) {
+          await settingsManager.updatePluginSettings(ctx.pluginName, updates)
+        }
+      })
 
       ctx.registerService('adapter:discord', adapter)
       ctx.log.info('Discord adapter registered')
