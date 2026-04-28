@@ -164,19 +164,25 @@ function createDiscordPlugin(): OpenACPPlugin {
       if ((config.forumChannelId == null || config.notificationChannelId == null) && settingsAPI) {
         const fullConfig = core.configManager.get() as Record<string, any>
         const legacy = (fullConfig.channels?.discord ?? {}) as Record<string, unknown>
+        let migrated = false
         if (legacy.forumChannelId != null && config.forumChannelId == null) {
           config.forumChannelId = legacy.forumChannelId
           await settingsAPI.set('forumChannelId', legacy.forumChannelId)
+          migrated = true
         }
         if (legacy.notificationChannelId != null && config.notificationChannelId == null) {
           config.notificationChannelId = legacy.notificationChannelId
           await settingsAPI.set('notificationChannelId', legacy.notificationChannelId)
+          migrated = true
         }
         if (legacy.assistantThreadId != null && config.assistantThreadId == null) {
           config.assistantThreadId = legacy.assistantThreadId
           await settingsAPI.set('assistantThreadId', legacy.assistantThreadId)
+          migrated = true
         }
-        ctx.log.info('Migrated channel IDs from main config to plugin settings')
+        if (migrated) {
+          ctx.log.info('Migrated channel IDs from main config to plugin settings')
+        }
       }
 
       const { DiscordAdapter } = await import('./adapter.js')
