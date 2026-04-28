@@ -795,21 +795,27 @@ export class ActivityTracker {
 
   private async startTyping(): Promise<void> {
     if (this.typingDismissed) return;
+    // Skip if already active — onThought fires on every chunk, so without this
+    // guard each thought event would trigger a separate sendTyping() call and
+    // quickly exhaust Discord's rate limit on /channels/:id/typing.
+    if (this.typingRefreshTimer) return;
+
     try {
       await this.channel.sendTyping();
     } catch {
       // ignore
     }
 
-    if (!this.typingRefreshTimer) {
-      this.typingRefreshTimer = setInterval(() => {
-        if (this.typingDismissed) {
-          this.stopTypingTimer();
-          return;
-        }
-        this.channel.sendTyping().catch(() => {});
-      }, TYPING_REFRESH_MS);
-    }
+    // Re-check after the async call in case typing was stopped while awaiting
+    if (this.typingDismissed) return;
+
+    this.typingRefreshTimer = setInterval(() => {
+      if (this.typingDismissed) {
+        this.stopTypingTimer();
+        return;
+      }
+      this.channel.sendTyping().catch(() => {});
+    }, TYPING_REFRESH_MS);
   }
 
   private stopTyping(): void {
