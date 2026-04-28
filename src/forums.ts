@@ -14,7 +14,7 @@ export async function ensureForums(
     forumChannelId: string | null
     notificationChannelId: string | null
   },
-  saveConfig: (updates: { forumChannelId?: string; notificationChannelId?: string }) => Promise<void>,
+  saveConfig: (key: 'forumChannelId' | 'notificationChannelId', value: string) => Promise<void>,
 ): Promise<{ forumChannel: ForumChannel | TextChannel; notificationChannel: TextChannel }> {
   let forumChannelId = config.forumChannelId
   let notificationChannelId = config.notificationChannelId
@@ -50,7 +50,7 @@ export async function ensureForums(
       forumChannel = channel as TextChannel
       log.info({ forumChannelId: channel.id }, '[forums] Created text channel (Community mode not enabled, using threads fallback)')
     }
-    await saveConfig({ forumChannelId: forumChannel.id })
+    await saveConfig('forumChannelId', forumChannel.id)
   }
 
   // Ensure notification channel exists — fetch existing or create new
@@ -73,7 +73,7 @@ export async function ensureForums(
       type: ChannelType.GuildText,
     })
     notificationChannel = channel as TextChannel
-    await saveConfig({ notificationChannelId: channel.id })
+    await saveConfig('notificationChannelId', channel.id)
     log.info({ notificationChannelId: channel.id }, '[forums] Created notification channel')
   }
 

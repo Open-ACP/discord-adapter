@@ -318,13 +318,13 @@ export async function handleOutputMode(
   }
 
   if (level === "reset") {
-    await core.configManager.save({ channels: { discord: { outputMode: undefined } } } as any, "channels.discord.outputMode");
+    await adapter.savePluginSetting('outputMode', undefined)
     await interaction.reply({ content: "🔄 Adapter output mode reset to global default.", ephemeral: true });
   } else if (level === "low" || level === "medium" || level === "high") {
-    await core.configManager.save({ channels: { discord: { outputMode: level } } }, "channels.discord.outputMode");
+    await adapter.savePluginSetting('outputMode', level)
     await interaction.reply({ content: `${OUTPUT_MODE_LABELS[level]} Output mode set to **${level}**.`, ephemeral: true });
   } else {
-    const current = (core.configManager.get().channels?.discord as any)?.outputMode ?? "medium";
+    const current = adapter.adapterOutputMode ?? "medium";
     await interaction.reply({
       content: `📊 Current output mode: **${current}**\n\n` +
         `\`/outputmode low|medium|high\` — Set adapter default\n` +

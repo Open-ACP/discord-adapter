@@ -1,4 +1,5 @@
 import type { TextChannel, ThreadChannel, Message } from "discord.js";
+import { log } from "@openacp/plugin-sdk";
 import {
   renderToolCard,
   type OutputMode,
@@ -58,6 +59,112 @@ export interface ToolEntry {
   displayTitle?: string;
   displayKind?: string;
   isNoise: boolean;
+}
+
+// ─── ThinkingIndicator ────────────────────────────────────────────────────────
+
+// Refresh the "thinking" message every 15s to show elapsed time.
+// Auto-stop after 3 minutes to avoid leaving stale indicators.
+const THINKING_REFRESH_MS = 15_000;
+const THINKING_MAX_MS = 3 * 60 * 1000;
+
+/**
+ * Manages the transient "💭 Thinking..." message shown while the agent is reasoning.
+ *
+ * Sends a message on `show()`, periodically edits it with elapsed time, and
+ * dismisses it (leaving the message in chat) when text output begins. Leaving
+ * the message avoids an extra API delete call; the indicator is just no longer updated.
+ */
+export class ThinkingIndicator {
+  private msg?: Message;
+  private sending = false;
+  private dismissed = false;
+  private refreshTimer?: ReturnType<typeof setInterval>;
+  private showTime = 0;
+
+  constructor(
+    private channel: TextChannel | ThreadChannel,
+    private sendQueue: SendQueue,
+  ) {}
+
+  async show(): Promise<void> {
+    if (this.sending || this.dismissed || this.msg) return;
+    this.sending = true;
+    this.showTime = Date.now();
+    try {
+      const result = await this.sendQueue.enqueue(() =>
+        this.channel.send({ content: "💭 *Thinking...*" }),
+      );
+      if (result) {
+        if (!this.dismissed) {
+          this.msg = result;
+          this.startRefreshTimer();
+        }
+      }
+    } catch (err) {
+      log.warn({ err }, "[ThinkingIndicator] show() failed");
+    } finally {
+      this.sending = false;
+    }
+  }
+
+  /**
+   * Edit the indicator to append a viewer link for thinking content, then dismiss.
+   * Used in high output mode when a tunnel is available.
+   */
+  async finalizeWithViewerLink(url: string): Promise<void> {
+    this.stopRefreshTimer();
+    if (this.msg && !this.dismissed) {
+      const msgRef = this.msg;
+      await this.sendQueue
+        .enqueue(() => msgRef.edit({ content: `💭 *Thinking...* — [View thinking](${url})` }))
+        .catch(() => {});
+    }
+    this.dismissed = true;
+    this.msg = undefined;
+  }
+
+  /** Dismiss indicator: stops refresh timer. Message stays in chat to reduce API calls. */
+  async dismiss(): Promise<void> {
+    if (this.dismissed) return;
+    this.dismissed = true;
+    this.stopRefreshTimer();
+    this.msg = undefined;
+  }
+
+  /** Reset for a new prompt cycle. */
+  reset(): void {
+    this.stopRefreshTimer();
+    this.dismissed = false;
+    this.msg = undefined;
+    this.sending = false;
+  }
+
+  private startRefreshTimer(): void {
+    this.stopRefreshTimer();
+    this.refreshTimer = setInterval(() => {
+      if (this.dismissed || !this.msg || Date.now() - this.showTime >= THINKING_MAX_MS) {
+        this.stopRefreshTimer();
+        return;
+      }
+      const elapsed = Math.round((Date.now() - this.showTime) / 1000);
+      const msgRef = this.msg;
+      this.sendQueue
+        .enqueue(() => {
+          // Re-check after waiting in queue — dismiss may have been called
+          if (this.dismissed || !msgRef) return Promise.resolve(undefined);
+          return msgRef.edit({ content: `💭 *Still thinking... (${elapsed}s)*` });
+        })
+        .catch(() => {});
+    }, THINKING_REFRESH_MS);
+  }
+
+  private stopRefreshTimer(): void {
+    if (this.refreshTimer) {
+      clearInterval(this.refreshTimer);
+      this.refreshTimer = undefined;
+    }
+  }
 }
 
 // ─── ToolStateMap ────────────────────────────────────────────────────────────
@@ -519,6 +626,9 @@ export class ActivityTracker {
   private _currentPlanEntries?: PlanEntry[];
   private _prevThoughtViewerLink?: string;
 
+  // Thinking indicator (visible "💭 Thinking..." message)
+  private thinkingIndicator: ThinkingIndicator;
+
   // Typing indicator state
   private typingDismissed = false;
   private typingRefreshTimer?: ReturnType<typeof setInterval>;
@@ -546,6 +656,7 @@ export class ActivityTracker {
     this.specBuilder = new DisplaySpecBuilder(tunnelService);
     this.toolStateMap = new ToolStateMap();
     this.thoughtBuffer = new ThoughtBuffer();
+    this.thinkingIndicator = new ThinkingIndicator(channel, sendQueue);
   }
 
   setOutputMode(mode: OutputMode): void {
@@ -567,6 +678,7 @@ export class ActivityTracker {
 
   async onNewPrompt(): Promise<void> {
     this.thoughtBuffer.reset();
+    this.thinkingIndicator.reset();
     this.stopTyping();
 
     // Finalize current card
@@ -603,6 +715,8 @@ export class ActivityTracker {
       this.thoughtBuffer.append(text);
     }
     this.typingDismissed = false;
+    // Show visible "💭 Thinking..." message on first thought chunk
+    await this.thinkingIndicator.show();
     await this.startTyping();
   }
 
@@ -613,7 +727,7 @@ export class ActivityTracker {
     // Seal current tool card so new tools go to a new card
     await this.sealToolCard();
 
-    // In high mode with tunnel: store thought and surface viewer link on previous card
+    // In high mode with tunnel: store thought, surface viewer link on indicator + previous card
     if (this._outputMode === "high" && this.tunnelService && this.sessionContext) {
       if (thoughtText.trim().length > 0) {
         const id = this.tunnelService.getStore().storeOutput(
@@ -623,6 +737,8 @@ export class ActivityTracker {
         );
         if (id !== null) {
           this._prevThoughtViewerLink = this.tunnelService.outputUrl(id);
+          // Update thinking indicator message to include viewer link before dismissing
+          await this.thinkingIndicator.finalizeWithViewerLink(this._prevThoughtViewerLink);
           // Re-render previous card to include the 💭 viewer link
           if (this.previousToolStateMap && this.previousToolCard) {
             this.previousToolStateMap.forEach((entry) => {
@@ -630,9 +746,13 @@ export class ActivityTracker {
               this.previousToolCard!.updateFromSpec(spec);
             });
           }
+          return;
         }
       }
     }
+
+    // Dismiss without viewer link
+    await this.thinkingIndicator.dismiss();
   }
 
   async onToolCall(
@@ -641,6 +761,8 @@ export class ActivityTracker {
     rawInput: unknown,
   ): Promise<void> {
     this.stopTyping();
+    // Dismiss thinking indicator when the agent starts executing tools
+    await this.thinkingIndicator.dismiss();
 
     const entry = this.toolStateMap.upsert(meta, kind, rawInput);
     const spec = this.specBuilder.buildToolSpec(entry, this._outputMode, this.sessionContext);
@@ -685,6 +807,7 @@ export class ActivityTracker {
 
   async cleanup(): Promise<void> {
     this.stopTyping();
+    await this.thinkingIndicator.dismiss();
 
     if (this.toolCard) {
       this.toolCard.finalize();
@@ -699,6 +822,8 @@ export class ActivityTracker {
 
   destroy(): void {
     this.stopTyping();
+    // Use fire-and-forget dismiss to avoid blocking destroy
+    this.thinkingIndicator.dismiss().catch(() => {});
     this.toolCard?.destroy();
     this.previousToolCard?.destroy();
   }

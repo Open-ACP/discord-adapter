@@ -151,55 +151,44 @@ function createDiscordPlugin(): OpenACPPlugin {
       }
 
       const core = ctx.core as OpenACPCore
-      const settingsManager = core.lifecycleManager?.settingsManager
 
-      // Migrate displayVerbosity → outputMode (backward compat)
-      const fullConfig = core.configManager.get() as Record<string, any>
-      const discordChannel = (fullConfig.channels?.discord ?? {}) as Record<string, unknown>
-      if (discordChannel.displayVerbosity && !discordChannel.outputMode) {
-        await core.configManager.save(
-          { channels: { discord: { outputMode: discordChannel.displayVerbosity } } },
-          'channels.discord.outputMode',
-        )
-        ctx.log.info('Migrated config channels.discord.displayVerbosity → outputMode')
+      // Create a SettingsAPI scoped to this plugin so the adapter can persist
+      // channel IDs and other runtime state to plugin settings instead of core config.
+      const settingsAPI = (core as any).settingsManager?.createAPI(ctx.pluginName)
+      if (!settingsAPI) {
+        ctx.log.warn('SettingsManager not available — plugin settings will not persist')
       }
 
       // If channel IDs are null in plugin settings but present in main config, migrate them.
       // This handles users who ran a version where ensureForums saved to main config instead of plugin settings.
-      if ((config.forumChannelId == null || config.notificationChannelId == null) && settingsManager) {
-        const legacy = discordChannel
-        const migrated: Record<string, unknown> = {}
+      if ((config.forumChannelId == null || config.notificationChannelId == null) && settingsAPI) {
+        const fullConfig = core.configManager.get() as Record<string, any>
+        const legacy = (fullConfig.channels?.discord ?? {}) as Record<string, unknown>
         if (legacy.forumChannelId != null && config.forumChannelId == null) {
           config.forumChannelId = legacy.forumChannelId
-          migrated.forumChannelId = legacy.forumChannelId
+          await settingsAPI.set('forumChannelId', legacy.forumChannelId)
         }
         if (legacy.notificationChannelId != null && config.notificationChannelId == null) {
           config.notificationChannelId = legacy.notificationChannelId
-          migrated.notificationChannelId = legacy.notificationChannelId
+          await settingsAPI.set('notificationChannelId', legacy.notificationChannelId)
         }
         if (legacy.assistantThreadId != null && config.assistantThreadId == null) {
           config.assistantThreadId = legacy.assistantThreadId
-          migrated.assistantThreadId = legacy.assistantThreadId
+          await settingsAPI.set('assistantThreadId', legacy.assistantThreadId)
         }
-        if (Object.keys(migrated).length > 0) {
-          await settingsManager.updatePluginSettings(ctx.pluginName, migrated)
-          ctx.log.info('Migrated channel IDs from main config to plugin settings')
-        }
+        ctx.log.info('Migrated channel IDs from main config to plugin settings')
       }
 
       const { DiscordAdapter } = await import('./adapter.js')
-      // config is a Record<string, unknown> from pluginConfig; at runtime it
-      // contains all DiscordChannelConfig fields populated from the migrated config.
-      adapter = new DiscordAdapter(ctx.core as OpenACPCore, {
-        ...config,
-        enabled: true,
-        maxMessageLength: 2000,
-      } as unknown as DiscordChannelConfig, async (updates) => {
-        // Save channel IDs to plugin settings so they persist across restarts
-        if (settingsManager) {
-          await settingsManager.updatePluginSettings(ctx.pluginName, updates)
-        }
-      })
+      adapter = new DiscordAdapter(
+        core,
+        {
+          ...config,
+          enabled: true,
+          maxMessageLength: 2000,
+        } as unknown as DiscordChannelConfig,
+        settingsAPI,
+      )
 
       ctx.registerService('adapter:discord', adapter)
       ctx.log.info('Discord adapter registered')
