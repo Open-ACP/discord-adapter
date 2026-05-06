@@ -203,40 +203,36 @@ export async function handleSettingsButton(
       const fieldPath = parts.slice(0, -1).join(':')
       const newValue = parts[parts.length - 1]
 
-      // For speech.stt.provider: check if API key is configured
+      // For speech.stt.provider: always delegate to assistant to handle API key setup,
+      // since speech config is managed by the speech plugin, not core config.
       if (fieldPath === 'speech.stt.provider') {
-        const config = adapter.core.configManager.get()
-        const providerConfig = config.speech?.stt?.providers?.[newValue]
-        if (!providerConfig?.apiKey) {
-          // No API key — delegate to assistant
-          const assistantSessionId = adapter.getAssistantSessionId()
-          if (assistantSessionId) {
-            const assistantSession = adapter.core.sessionManager.getSession(assistantSessionId)
-            if (assistantSession) {
-              const prompt = `User wants to enable ${newValue} as Speech-to-Text provider, but no API key is configured yet. Guide them to get a ${newValue} API key and set it up. After they provide the key, run both commands: \`openacp config set speech.stt.providers.${newValue}.apiKey <key>\` and \`openacp config set speech.stt.provider ${newValue}\``
-              await assistantSession.enqueuePrompt(prompt)
+        const assistantSessionId = adapter.getAssistantSessionId()
+        if (assistantSessionId) {
+          const assistantSession = adapter.core.sessionManager.getSession(assistantSessionId)
+          if (assistantSession) {
+            const prompt = `User wants to enable ${newValue} as Speech-to-Text provider. Check if an API key is configured (\`openacp config\`). If not, guide them to get a ${newValue} API key and set it up. After they provide the key, run both commands: \`openacp config set speech.stt.providers.${newValue}.apiKey <key>\` and \`openacp config set speech.stt.provider ${newValue}\``
+            await assistantSession.enqueuePrompt(prompt)
 
-              try {
-                await interaction.update({
-                  content: '**⚙️ Settings**\nTap to change:',
-                  components: buildSettingsRows(adapter),
-                })
-              } catch { /* ignore */ }
-              try { await interaction.followUp({ content: '🔑 API key needed — check the Assistant thread.', ephemeral: true }) } catch { /* ignore */ }
-              return
-            }
+            try {
+              await interaction.update({
+                content: '**⚙️ Settings**\nTap to change:',
+                components: buildSettingsRows(adapter),
+              })
+            } catch { /* ignore */ }
+            try { await interaction.followUp({ content: '🔑 API key setup — check the Assistant thread.', ephemeral: true }) } catch { /* ignore */ }
+            return
           }
-
-          // No assistant — just warn
-          try {
-            await interaction.update({
-              content: '**⚙️ Settings**\nTap to change:',
-              components: buildSettingsRows(adapter),
-            })
-          } catch { /* ignore */ }
-          try { await interaction.followUp({ content: `⚠️ Set API key first: \`openacp config set speech.stt.providers.${newValue}.apiKey <key>\``, ephemeral: true }) } catch { /* ignore */ }
-          return
         }
+
+        // No assistant — show manual command
+        try {
+          await interaction.update({
+            content: '**⚙️ Settings**\nTap to change:',
+            components: buildSettingsRows(adapter),
+          })
+        } catch { /* ignore */ }
+        try { await interaction.followUp({ content: `⚠️ Set API key first: \`openacp config set speech.stt.providers.${newValue}.apiKey <key>\``, ephemeral: true }) } catch { /* ignore */ }
+        return
       }
 
       const updates = buildNestedUpdate(fieldPath, newValue)

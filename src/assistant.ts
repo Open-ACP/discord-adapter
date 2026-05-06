@@ -118,9 +118,10 @@ export function buildAssistantSystemPrompt(core: OpenACPCore): string {
       .map(([status, count]) => `${status}: ${count}`)
       .join(', ') || 'none'
 
+  const workspace = core.configManager.resolveWorkspace()
   const installedEntries = core.agentCatalog.getInstalledEntries()
   const installedAgents = Object.keys(installedEntries)
-  const agentNames = installedAgents.length ? installedAgents.join(', ') : Object.keys(config.agents).join(', ')
+  const agentNames = installedAgents.join(', ')
 
   const availableItems = core.agentCatalog.getAvailable()
   const availableAgentCount = availableItems.filter((i) => !i.installed).length
@@ -133,7 +134,7 @@ export function buildAssistantSystemPrompt(core: OpenACPCore): string {
 - Installed agents: ${agentNames}
 - Available in ACP Registry: ${availableAgentCount} more agents (use \`/agents\` to browse)
 - Default agent: ${config.defaultAgent}
-- Workspace base directory: ${config.workspace.baseDir}
+- Workspace base directory: ${workspace}
 - Platform: Discord
 
 ## Discord Context
@@ -144,9 +145,9 @@ export function buildAssistantSystemPrompt(core: OpenACPCore): string {
 ## Action Playbook
 
 ### Create Session
-- The workspace is the project directory where the agent will work (read, write, execute code). It should be a specific project folder like \`~/code/my-project\` or \`${config.workspace.baseDir}/my-app\`.
+- The workspace is the project directory where the agent will work (read, write, execute code). It should be a specific project folder like \`~/code/my-project\` or \`${workspace}/my-app\`.
 - Ask which agent to use (if multiple are installed). Installed: ${agentNames}
-- Ask which project directory to use as workspace. Suggest \`${config.workspace.baseDir}\` as the base.
+- Ask which project directory to use as workspace. Suggest \`${workspace}\` as the base.
 - Create via: \`openacp api new <agent> <workspace> --channel discord\`
 
 ### Browse & Install Agents

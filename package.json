@@ -25,9 +25,10 @@
     "nanoid": "^5.1.7"
   },
   "devDependencies": {
-    "@openacp/plugin-sdk": "^2026.331.1",
-    "typescript": "^5.4.0",
-    "vitest": "^3.0.0"
+    "@openacp/cli": "^2026.506.1",
+    "@openacp/plugin-sdk": "^2026.506.1",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
   },
   "files": [
     "dist"

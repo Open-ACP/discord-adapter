@@ -19,24 +19,7 @@ function createDiscordPlugin(): OpenACPPlugin {
     permissions: ['services:register', 'kernel:access', 'events:read'],
 
     async install(ctx: InstallContext) {
-      const { terminal, settings, legacyConfig } = ctx
-
-      // Migrate from legacy config if present
-      if (legacyConfig) {
-        const ch = legacyConfig.channels as Record<string, unknown> | undefined
-        const discordCfg = ch?.discord as Record<string, unknown> | undefined
-        if (discordCfg?.botToken) {
-          await settings.setAll({
-            botToken: discordCfg.botToken,
-            guildId: discordCfg.guildId,
-            forumChannelId: discordCfg.forumChannelId ?? null,
-            notificationChannelId: discordCfg.notificationChannelId ?? null,
-            assistantThreadId: discordCfg.assistantThreadId ?? null,
-          })
-          terminal.log.success('Discord settings migrated from legacy config')
-          return
-        }
-      }
+      const { terminal, settings } = ctx
 
       // Interactive setup via terminal
       const { validateDiscordToken } = await import('./validators.js')
