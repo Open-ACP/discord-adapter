@@ -6,7 +6,7 @@ import {
 import type { ChatInputCommandInteraction, ButtonInteraction } from 'discord.js'
 import { log } from '@openacp/plugin-sdk'
 import { buildSessionControlKeyboard } from './admin.js'
-import { createSessionThread, deleteSessionThread } from '../forums.js'
+import { createSessionThread, deleteSessionThread, updateSessionThreadStarter } from '../forums.js'
 import type { DiscordAdapter } from '../adapter.js'
 
 export async function handleNew(
@@ -136,6 +136,13 @@ export async function executeNewSession(
 
     // Persist control message ID for post-restart button updates
     await adapter.persistControlMsgId(session.id, controlMsg.id).catch(() => {})
+
+    // Replace the parent-channel "⏳ Setting up..." placeholder so the thread
+    // preview reflects the live session.
+    await updateSessionThreadStarter(
+      thread,
+      `📂 **${session.agentName}** — \`${session.workingDirectory}\``,
+    )
 
     // Reply to the interaction with a link to the thread
     const replyMsg = `✅ Session created → [Open thread](https://discord.com/channels/${adapter.getGuildId()}/${thread.id})`

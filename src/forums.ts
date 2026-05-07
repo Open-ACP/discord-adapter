@@ -107,6 +107,30 @@ export async function createSessionThread(
   return thread
 }
 
+// ─── updateSessionThreadStarter ───────────────────────────────────────────────
+
+/**
+ * Edits the starter message of a session thread.
+ *
+ * In TextChannel mode the starter message is the parent-channel preview the
+ * thread was started from; in Forum mode it's the post's first message. Both
+ * default to "⏳ Setting up..." when the thread is created — this lets callers
+ * replace that placeholder once the session is ready.
+ */
+export async function updateSessionThreadStarter(
+  thread: ThreadChannel,
+  content: string,
+): Promise<void> {
+  try {
+    const starter = await thread.fetchStarterMessage().catch(() => null)
+    if (starter && starter.editable) {
+      await starter.edit({ content })
+    }
+  } catch (err) {
+    log.warn({ err, threadId: thread.id }, '[forums] Failed to update session thread starter')
+  }
+}
+
 // ─── renameSessionThread ──────────────────────────────────────────────────────
 
 /**
