@@ -76,6 +76,8 @@ function createDiscordPlugin(): OpenACPPlugin {
       await settings.setAll({
         botToken,
         guildId: guildId.trim(),
+        categoryId: null,
+        categoryName: null,
         forumChannelId: null,
         notificationChannelId: null,
         assistantThreadId: null,
@@ -92,6 +94,8 @@ function createDiscordPlugin(): OpenACPPlugin {
         options: [
           { value: 'token', label: 'Change bot token' },
           { value: 'guildId', label: 'Change guild ID' },
+          { value: 'categoryName', label: 'Change category name' },
+          { value: 'resetChannels', label: 'Reset saved channel IDs' },
           { value: 'done', label: 'Done' },
         ],
       })
@@ -116,6 +120,21 @@ function createDiscordPlugin(): OpenACPPlugin {
         })
         await settings.set('guildId', val.trim())
         terminal.log.success('Guild ID updated')
+      } else if (choice === 'categoryName') {
+        const val = await terminal.text({
+          message: 'Category name for OpenACP channels (blank for no category):',
+          defaultValue: (current.categoryName as string) ?? '',
+        })
+        const trimmed = val.trim()
+        await settings.set('categoryName', trimmed || null)
+        await settings.set('categoryId', null)
+        terminal.log.success(trimmed ? 'Category name updated' : 'Category disabled')
+      } else if (choice === 'resetChannels') {
+        await settings.set('categoryId', null)
+        await settings.set('forumChannelId', null)
+        await settings.set('notificationChannelId', null)
+        await settings.set('assistantThreadId', null)
+        terminal.log.success('Saved Discord channel IDs reset')
       }
     },
 

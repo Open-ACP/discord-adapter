@@ -168,6 +168,8 @@ export class DiscordAdapter extends MessagingAdapter {
           const { forumChannel, notificationChannel } = await ensureForums(
             guild,
             {
+              categoryId: this.discordConfig.categoryId,
+              categoryName: this.discordConfig.categoryName,
               forumChannelId: this.discordConfig.forumChannelId,
               notificationChannelId: this.discordConfig.notificationChannelId,
             },

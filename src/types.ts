@@ -12,6 +12,8 @@ export interface DiscordChannelConfig {
   enabled: boolean
   botToken: string
   guildId: string
+  categoryId: string | null
+  categoryName: string | null
   forumChannelId: string | null
   notificationChannelId: string | null
   assistantThreadId: string | null

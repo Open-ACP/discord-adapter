@@ -1,6 +1,68 @@
 import { ChannelType } from 'discord.js'
-import type { ForumChannel, ThreadChannel, Guild, TextChannel } from 'discord.js'
+import type { CategoryChannel, ForumChannel, ThreadChannel, Guild, TextChannel } from 'discord.js'
 import { log } from '@openacp/plugin-sdk'
+
+type RuntimeChannelKey = 'categoryId' | 'forumChannelId' | 'notificationChannelId'
+
+function normalizeCategoryName(name: string | null | undefined): string | null {
+  const trimmed = name?.trim()
+  if (!trimmed) return null
+  return trimmed.slice(0, 100)
+}
+
+async function ensureCategory(
+  guild: Guild,
+  config: { categoryId: string | null; categoryName?: string | null },
+  saveConfig: (key: RuntimeChannelKey, value: string) => Promise<void>,
+): Promise<CategoryChannel | null> {
+  let categoryId = config.categoryId
+  const categoryName = normalizeCategoryName(config.categoryName)
+  if (!categoryId && !categoryName) return null
+
+  if (categoryId) {
+    try {
+      const ch = guild.channels.cache.get(categoryId)
+        ?? await guild.channels.fetch(categoryId)
+      if (ch && ch.type === ChannelType.GuildCategory) {
+        log.info({ categoryId }, '[forums] Reusing existing category')
+        return ch as CategoryChannel
+      }
+    } catch {
+      log.warn({ categoryId }, '[forums] Saved category not found, recreating...')
+    }
+  }
+
+  if (!categoryName) return null
+
+  const cached = guild.channels.cache.find(
+    (ch) => ch.type === ChannelType.GuildCategory && ch.name === categoryName,
+  )
+  if (cached) {
+    await saveConfig('categoryId', cached.id)
+    log.info({ categoryId: cached.id, categoryName }, '[forums] Reusing category by name')
+    return cached as CategoryChannel
+  }
+
+  const category = await guild.channels.create({
+    name: categoryName,
+    type: ChannelType.GuildCategory,
+  })
+  await saveConfig('categoryId', category.id)
+  log.info({ categoryId: category.id, categoryName }, '[forums] Created category')
+  return category as CategoryChannel
+}
+
+async function ensureChannelParent(
+  channel: ForumChannel | TextChannel,
+  category: CategoryChannel | null,
+): Promise<void> {
+  if (!category || channel.parentId === category.id) return
+  try {
+    await channel.setParent(category.id)
+  } catch (err) {
+    log.warn({ err, channelId: channel.id, categoryId: category.id }, '[forums] Failed to move channel into category')
+  }
+}
 
 // ─── ensureForums ─────────────────────────────────────────────────────────────
 
@@ -11,11 +73,14 @@ import { log } from '@openacp/plugin-sdk'
 export async function ensureForums(
   guild: Guild,
   config: {
+    categoryId: string | null
+    categoryName?: string | null
     forumChannelId: string | null
     notificationChannelId: string | null
   },
-  saveConfig: (key: 'forumChannelId' | 'notificationChannelId', value: string) => Promise<void>,
+  saveConfig: (key: RuntimeChannelKey, value: string) => Promise<void>,
 ): Promise<{ forumChannel: ForumChannel | TextChannel; notificationChannel: TextChannel }> {
+  const category = await ensureCategory(guild, config, saveConfig)
   let forumChannelId = config.forumChannelId
   let notificationChannelId = config.notificationChannelId
 
@@ -27,6 +92,7 @@ export async function ensureForums(
         ?? await guild.channels.fetch(forumChannelId)
       if (ch && (ch.type === ChannelType.GuildForum || ch.type === ChannelType.GuildText)) {
         forumChannel = ch as ForumChannel | TextChannel
+        await ensureChannelParent(forumChannel, category)
         log.info({ forumChannelId, type: ch.type }, '[forums] Reusing existing sessions channel')
       }
     } catch {
@@ -39,6 +105,7 @@ export async function ensureForums(
       const channel = await guild.channels.create({
         name: 'openacp-sessions',
         type: ChannelType.GuildForum,
+        parent: category?.id,
       })
       forumChannel = channel as ForumChannel
       log.info({ forumChannelId: channel.id }, '[forums] Created forum channel')
@@ -46,6 +113,7 @@ export async function ensureForums(
       const channel = await guild.channels.create({
         name: 'openacp-sessions',
         type: ChannelType.GuildText,
+        parent: category?.id,
       })
       forumChannel = channel as TextChannel
       log.info({ forumChannelId: channel.id }, '[forums] Created text channel (Community mode not enabled, using threads fallback)')
@@ -61,6 +129,7 @@ export async function ensureForums(
         ?? await guild.channels.fetch(notificationChannelId)
       if (ch && ch.type === ChannelType.GuildText) {
         notificationChannel = ch as TextChannel
+        await ensureChannelParent(notificationChannel, category)
         log.info({ notificationChannelId }, '[forums] Reusing existing notification channel')
       }
     } catch {
@@ -71,6 +140,7 @@ export async function ensureForums(
     const channel = await guild.channels.create({
       name: 'openacp-notifications',
       type: ChannelType.GuildText,
+      parent: category?.id,
     })
     notificationChannel = channel as TextChannel
     await saveConfig('notificationChannelId', channel.id)

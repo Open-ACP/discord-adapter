@@ -73,4 +73,5 @@ After installing the plugin, run `openacp plugin configure @openacp/discord-adap
 
 - Discord bot token
 - Guild ID
+- Optional category name for grouping OpenACP channels, useful when running multiple OpenACP instances in one server
 - Forum channel ID
