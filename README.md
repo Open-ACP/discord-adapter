@@ -75,3 +75,5 @@ After installing the plugin, run `openacp plugin configure @openacp/discord-adap
 - Guild ID
 - Optional category name for grouping OpenACP channels, useful when running multiple OpenACP instances in one server
 - Forum channel ID
+
+When multiple OpenACP bot instances share one Discord server, configure each instance with its own sessions forum/category. The adapter processes locally recorded sessions and threads under its configured sessions forum, which prevents cross-talk when each instance has distinct Discord surfaces.

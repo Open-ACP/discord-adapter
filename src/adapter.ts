@@ -53,6 +53,7 @@ import {
   downloadDiscordAttachment,
   isAttachmentTooLarge,
 } from "./media.js";
+import { isManagedDiscordThread } from "./thread-routing.js";
 
 export class DiscordAdapter extends MessagingAdapter {
   readonly name = 'discord';
@@ -500,6 +501,28 @@ export class DiscordAdapter extends MessagingAdapter {
         const userId = message.author.id;
         let text = message.content;
 
+        const liveSession = this.core.sessionManager.getSessionByThread("discord", threadId);
+        const storedRecord = liveSession ? undefined : this.core.sessionManager.getRecordByThread("discord", threadId);
+        const sessionId = liveSession?.id ?? storedRecord?.sessionId ?? "unknown";
+
+        if (!isManagedDiscordThread({
+          threadId,
+          parentId: message.channel.parentId,
+          forumChannelId: this.forumChannel?.id ?? null,
+          assistantThreadId: this.discordConfig.assistantThreadId,
+          hasSessionRecord: sessionId !== "unknown",
+        })) {
+          log.debug(
+            {
+              threadId,
+              parentId: message.channel.parentId,
+              forumChannelId: this.forumChannel?.id,
+            },
+            "[DiscordAdapter] Ignoring unmanaged thread",
+          );
+          return;
+        }
+
         log.debug(
           {
             threadId,
@@ -512,11 +535,6 @@ export class DiscordAdapter extends MessagingAdapter {
 
         // Ignore messages with no text and no attachments
         if (!text && message.attachments.size === 0) return;
-
-        // Resolve sessionId for file storage (fallback to "unknown" for new sessions)
-        const sessionId =
-          this.core.sessionManager.getSessionByThread("discord", threadId)
-            ?.id ?? "unknown";
 
         // Process attachments
         if (message.attachments.size > 0) {
