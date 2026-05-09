@@ -578,6 +578,21 @@ export class DiscordAdapter extends MessagingAdapter {
           }
         }
 
+        // Discord rendering hint: inject once on the first prompt of a session so
+        // the agent knows to wrap tables / fixed-width content in code fences.
+        // Discord's markdown renderer doesn't handle native tables — unwrapped
+        // tabular content displays as raw "| col |" text. promptCount === 0 means
+        // this is the very first user turn (lazy-resumed sessions restore the
+        // count from disk so they won't get re-prepended).
+        const liveSession = this.core.sessionManager.getSessionByThread("discord", threadId);
+        if (liveSession && liveSession.promptCount === 0) {
+          text =
+            "[Discord rendering note: ALWAYS wrap tables, ASCII art, tree output, " +
+            "and aligned/fixed-column text in triple-backtick fences. Discord does " +
+            "not render markdown tables natively.]\n\n---\n\n" +
+            text;
+        }
+
         // Route to core for session dispatch
         await this.core.handleMessage({
           channelId: "discord",
