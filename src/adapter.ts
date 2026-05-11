@@ -37,6 +37,7 @@ import {
   createSessionThread as forumsCreateThread,
   renameSessionThread as forumsRenameThread,
   deleteSessionThread as forumsDeleteThread,
+  updateSessionThreadStarter as forumsUpdateStarter,
   ensureUnarchived,
   buildDeepLink,
 } from "./forums.js";
@@ -238,7 +239,13 @@ export class DiscordAdapter extends MessagingAdapter {
                       components: [buildSessionControlKeyboard(sessionId, false, false)],
                     }),
                   )
-                  .then((controlMsg) => this.persistControlMsgId(sessionId, controlMsg.id));
+                  .then(async (controlMsg) => {
+                    await this.persistControlMsgId(sessionId, controlMsg.id);
+                    await forumsUpdateStarter(
+                      thread,
+                      `📂 **${session.agentName}** — \`${session.workingDirectory}\``,
+                    );
+                  });
               })
               .catch((err) => {
                 log.warn({ err, sessionId, threadId }, '[DiscordAdapter] Failed to send initial messages for API-created session');
