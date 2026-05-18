@@ -507,33 +507,124 @@ function formatHighDetailsLegacy(
 
 function splitMessageImpl(text: string, maxLength: number): string[] {
   if (text.length <= maxLength) return [text];
-  // Split at paragraph boundaries first, then lines
+  // Split at paragraph boundaries first; for paragraphs that are individually
+  // too long, fall back to line-splitting; for single lines that are too long,
+  // fall back to hard-character splitting. All content must reach a chunk —
+  // never truncate-and-drop.
   const paragraphs = text.split("\n\n");
   const chunks: string[] = [];
   let current = "";
-  for (const para of paragraphs) {
-    const candidate = current ? `${current}\n\n${para}` : para;
-    if (candidate.length > maxLength && current) {
-      chunks.push(current);
-      current = para.length > maxLength ? para.slice(0, maxLength) : para;
-    } else if (candidate.length > maxLength) {
-      // Single paragraph too long, split at line boundaries
-      const lines = para.split("\n");
-      for (const line of lines) {
-        const lineCandidate = current ? `${current}\n${line}` : line;
-        if (lineCandidate.length > maxLength && current) {
-          chunks.push(current);
-          current = line;
-        } else {
-          current = lineCandidate;
+  const flush = () => {
+    if (current) { chunks.push(current); current = ""; }
+  };
+
+  const pushLines = (para: string) => {
+    const lines = para.split("\n");
+    for (const line of lines) {
+      if (line.length > maxLength) {
+        // Single line too long — hard split by characters so nothing is lost.
+        flush();
+        for (let i = 0; i < line.length; i += maxLength) {
+          chunks.push(line.slice(i, i + maxLength));
         }
+        continue;
       }
+      const lineCandidate = current ? `${current}\n${line}` : line;
+      if (lineCandidate.length > maxLength) {
+        flush();
+        current = line;
+      } else {
+        current = lineCandidate;
+      }
+    }
+  };
+
+  for (const para of paragraphs) {
+    if (para.length > maxLength) {
+      // Paragraph alone exceeds the limit — flush whatever we've buffered
+      // and split this paragraph by lines so the full content survives.
+      flush();
+      pushLines(para);
+      continue;
+    }
+    const candidate = current ? `${current}\n\n${para}` : para;
+    if (candidate.length > maxLength) {
+      flush();
+      current = para;
     } else {
       current = candidate;
     }
   }
-  if (current) chunks.push(current);
-  return chunks;
+  flush();
+  return balanceCodeFences(chunks);
+}
+
+/**
+ * Close any open ``` fence at the end of each chunk and re-open it at the
+ * start of the next (with the same language tag if any). Without this, a long
+ * fenced block split across Discord messages renders with the continuation
+ * as raw text.
+ *
+ * Implementation: walk fences in order, tracking which fence (if any) is
+ * currently open via state machine. Whatever's open at the end of a chunk
+ * is what needs to be re-opened in the next chunk — with one nuance for
+ * untagged fences:
+ *
+ *   - TAGGED open (e.g. ```python) at chunk end: always carry forward.
+ *     Losing a language tag across a split is the worst-case outcome.
+ *
+ *   - UNTAGGED open (bare ```) at chunk end: carry forward ONLY if the chunk
+ *     has content after the trailing fence. A bare ``` as the last non-blank
+ *     line is more likely an LLM emitting a dangling/orphan close (after a
+ *     balanced block) than the start of a new code block. Carrying that
+ *     untagged fence into the next chunk would corrupt any later language
+ *     tag (e.g. prepending ``` in front of a ```python that should stay).
+ */
+function balanceCodeFences(chunks: string[]): string[] {
+  // Triple-backtick at start of a line, optionally followed by a language tag.
+  const FENCE_RE = /^```[a-zA-Z0-9_-]*/gm;
+  // Anchored variant for "this whole line is a fence" check.
+  const FENCE_LINE_RE = /^```[a-zA-Z0-9_-]*$/;
+
+  const result: string[] = [];
+  let pendingOpenFence: string | null = null;
+
+  for (let chunk of chunks) {
+    if (pendingOpenFence !== null) {
+      chunk = `${pendingOpenFence}\n${chunk}`;
+      pendingOpenFence = null;
+    }
+
+    // Walk fences in order, toggling the currently-open fence.
+    let openFence: string | null = null;
+    for (const fence of chunk.match(FENCE_RE) ?? []) {
+      openFence = openFence === null ? fence : null;
+    }
+
+    if (openFence !== null) {
+      // Decide whether to carry forward BEFORE we mutate the chunk.
+      let shouldCarry: boolean;
+      if (openFence.length > 3) {
+        // Tagged open — always carry forward.
+        shouldCarry = true;
+      } else {
+        // Untagged open — only carry if there's content after the trailing
+        // fence (i.e., the chunk genuinely splits a fenced block mid-content).
+        const lines = chunk.split("\n");
+        let i = lines.length - 1;
+        while (i >= 0 && lines[i].trim() === "") i--;
+        shouldCarry = i >= 0 && !FENCE_LINE_RE.test(lines[i]);
+      }
+
+      // Close the chunk so it renders as a self-contained block either way.
+      chunk = `${chunk}\n\`\`\``;
+      if (shouldCarry) pendingOpenFence = openFence;
+    }
+
+    result.push(chunk);
+  }
+
+  return result;
 }
 
 /** @deprecated Use renderToolCard instead */
