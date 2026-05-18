@@ -131,6 +131,17 @@ const ERROR_STATUSES = new Set(["error", "failed"]);
 const LOW_MODE_COLUMNS = 3;
 const INLINE_OUTPUT_MAX = 800;
 
+/**
+ * Tool kinds whose title is "code-y" user content (file paths, shell commands,
+ * search patterns) and should render as monospace inline code rather than bold.
+ * Excludes kinds where the title is a descriptive label like "Update Topic
+ * Context" or "Invoke Subagent" — those stay bold.
+ */
+const CODEY_KINDS = new Set([
+  "execute", "bash", "command", "terminal",
+  "read", "edit", "write", "delete", "search",
+]);
+
 // ─── renderSpecSection ──────────────────────────────────────────────────────
 
 export function renderSpecSection(spec: ToolDisplaySpec, mode: OutputMode): string {
@@ -147,7 +158,12 @@ export function renderSpecSection(spec: ToolDisplaySpec, mode: OutputMode): stri
 
   // Title line: noise tools use 👁️ instead of status icon
   const leadIcon = spec.isNoise && mode === "high" ? "👁️" : statusIcon;
-  const titleLine = `${leadIcon} ${kindIcon} **${spec.title}**`;
+  // For tools whose title is code-y user content — file paths, search patterns,
+  // shell commands — render as inline `code` (monospace, no markdown
+  // interpretation). Tools whose title is a descriptive label ("Update Topic
+  // Context", "Invoke Subagent") stay bold.
+  const titleText = CODEY_KINDS.has(spec.kind) ? `\`${spec.title}\`` : `**${spec.title}**`;
+  const titleLine = `${leadIcon} ${kindIcon} ${titleText}`;
   lines.push(titleLine);
 
   // Description line
