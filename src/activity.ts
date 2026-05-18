@@ -250,12 +250,37 @@ function applyUpdate(entry: ToolEntry, update: PendingUpdate): void {
   if (update.diffStats !== undefined) entry.diffStats = update.diffStats;
 }
 
+// Gemini-acp internal bookkeeping tool titles — hidden at low/medium, shown
+// with 👁️ at high.
+//
+// Gemini emits tool titles via two paths:
+//   1. Live (in-progress) events use the invocation's getDescription(),
+//      producing dynamic strings like:
+//        - 'Update topic to: "<title>"'
+//        - 'Update tactical intent: "<intent>"'
+//   2. Replayed (completed/historical) events use the tool's static
+//      displayName, producing exact strings like:
+//        - "Update Topic Context"
+//        - "Invoke Subagent"
+//
+// The exact set covers the replay path. The prefixes anchor on the literal
+// `: "` that the dynamic format always emits, so they can't accidentally
+// match a future tool named (e.g.) "Update topic permissions".
+//
+// Live subagent invocations emit "Invoke <agent-name>" with a user-
+// configurable suffix; we can't safely match those without enumerating
+// every subagent name, so they fall through and stay visible.
+const GEMINI_NOISE_EXACT = new Set(["update topic context", "invoke subagent"]);
+const GEMINI_NOISE_PREFIXES = ['update topic to: "', 'update tactical intent: "'];
+
 /** Simple noise evaluation — noise tools are hidden in low/medium modes */
-function evaluateNoise(name: string, kind: string, _rawInput: unknown): boolean {
+function evaluateNoise(name: string, _kind: string, _rawInput: unknown): boolean {
   const lower = name.toLowerCase();
-  // TodoRead/TodoWrite, ToolResult with no content, etc. are considered noise
+  // Claude: TodoRead/TodoWrite, ToolResult with no content
   if (lower.includes("todo")) return true;
   if (lower === "toolresult") return true;
+  if (GEMINI_NOISE_EXACT.has(lower)) return true;
+  if (GEMINI_NOISE_PREFIXES.some((p) => lower.startsWith(p))) return true;
   return false;
 }
 
@@ -311,6 +336,7 @@ const KIND_ICONS: Record<string, string> = {
 };
 
 const EXECUTE_KINDS = new Set(["execute", "bash", "command", "terminal"]);
+
 const INLINE_MAX_LINES = 15;
 const INLINE_MAX_CHARS = 800;
 
@@ -326,10 +352,29 @@ function capitalize(s: string): string {
 }
 
 function buildTitle(entry: ToolEntry, kind: string): string {
-  if (entry.displayTitle) return entry.displayTitle;
-  if (entry.displaySummary) return entry.displaySummary;
-
   const input = asRecord(entry.rawInput);
+
+  // We prefer rawInput-derived titles over agent-supplied displayTitle whenever
+  // we have the raw data. Some agents (gemini) emit prettified displayTitle
+  // strings that capitalize the first character — "Life/finance/" instead of
+  // "life/finance/", "Find /path" instead of "find /path", etc. The rawInput
+  // field is the source of truth.
+  //
+  // Order: kind-specific raw fields → displayTitle/displaySummary → capitalize fallback.
+
+  if (EXECUTE_KINDS.has(kind)) {
+    const command = typeof input.command === "string" ? input.command : null;
+    if (command) return command.length > 60 ? command.slice(0, 57) + "..." : command;
+    // No command param: agents like gemini name argless tools with TitleCase
+    // ("Pwd", "Ls") and use the tool name as the bash command. Lowercase it —
+    // but ONLY for short single-word identifiers, so we don't mangle agents
+    // that happen to put a full command into entry.name.
+    if (entry.name && /^[A-Za-z][A-Za-z0-9_-]{0,19}$/.test(entry.name)) {
+      return entry.name.toLowerCase();
+    }
+    const description = typeof input.description === "string" ? input.description : null;
+    if (description) return description;
+  }
 
   if (kind === "read") {
     const filePath = typeof input.file_path === "string" ? input.file_path : null;
@@ -344,7 +389,6 @@ function buildTitle(entry: ToolEntry, kind: string): string {
       if (offset !== null) return `${filePath} (from line ${offset})`;
       return filePath;
     }
-    return capitalize(entry.name);
   }
 
   if (kind === "edit" || kind === "write" || kind === "delete") {
@@ -355,15 +399,6 @@ function buildTitle(entry: ToolEntry, kind: string): string {
           ? input.path
           : null;
     if (filePath) return filePath;
-    return capitalize(entry.name);
-  }
-
-  if (EXECUTE_KINDS.has(kind)) {
-    const description = typeof input.description === "string" ? input.description : null;
-    if (description) return description;
-    const command = typeof input.command === "string" ? input.command : null;
-    if (command) return command.length > 60 ? command.slice(0, 57) + "..." : command;
-    return capitalize(entry.name);
   }
 
   if (kind === "agent") {
@@ -373,7 +408,6 @@ function buildTitle(entry: ToolEntry, kind: string): string {
     if (skill) return skill;
     if (description) return description.length > 60 ? description.slice(0, 57) + "..." : description;
     if (subtype) return subtype;
-    return capitalize(entry.name);
   }
 
   if (kind === "search") {
@@ -391,13 +425,22 @@ function buildTitle(entry: ToolEntry, kind: string): string {
       else if (type) title += ` (type: ${type})`;
       return title;
     }
-    return capitalize(entry.name);
   }
 
   if (entry.name.toLowerCase() === "skill" && typeof input.skill === "string" && input.skill) {
     return input.skill;
   }
 
+  // Fall back to agent-supplied display strings, then to the tool name itself.
+  if (entry.displayTitle) return entry.displayTitle;
+  if (entry.displaySummary) return entry.displaySummary;
+
+  // Gemini-acp puts the actual content (file paths, search patterns,
+  // natural-language descriptions) in `entry.name` with no rawInput and no
+  // displayTitle. Preserve case rather than capitalizing the first letter —
+  // capitalize() corrupted real paths like "daily-notes/..." into
+  // "Daily-notes/...". The EXECUTE_KINDS branch above already lowercases
+  // short identifiers like "Pwd" → "pwd" for that specific case.
   return entry.name;
 }
 
@@ -763,6 +806,21 @@ export class ActivityTracker {
     this.stopTyping();
     // Dismiss thinking indicator when the agent starts executing tools
     await this.thinkingIndicator.dismiss();
+
+    // Some agents (gemini) re-emit prior tool_call events on every agentic
+    // step — without this guard, each step appears as a fresh Discord message
+    // containing every tool call from the entire turn so far. If we've already
+    // recorded this tool ID in the previous card, drop the re-emission: any
+    // status/content already applied via onToolUpdate is the source of truth,
+    // and upserting would clobber it back to "running".
+    const prevEntry = this.previousToolStateMap?.get(meta.id);
+    if (prevEntry) {
+      if (this.previousToolCard) {
+        const spec = this.specBuilder.buildToolSpec(prevEntry, this._outputMode, this.sessionContext);
+        this.previousToolCard.updateFromSpec(spec);
+      }
+      return;
+    }
 
     const entry = this.toolStateMap.upsert(meta, kind, rawInput);
     const spec = this.specBuilder.buildToolSpec(entry, this._outputMode, this.sessionContext);

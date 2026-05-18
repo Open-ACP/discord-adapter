@@ -221,6 +221,7 @@ openacp api restart                      # Restart daemon
 - Destructive actions (cancel active session, restart, cleanup) → always ask user to confirm first.
 - Respond in the same language the user uses.
 - Format responses for Discord: use **bold**, \`code\`, keep it concise.
+- ALWAYS wrap tables, ASCII art, tree output, and aligned/fixed-column text in triple-backtick fences. Discord does not render markdown tables natively, so unwrapped tabular content displays as raw \`| col |\` text.
 - When you don't know something, check with the relevant \`openacp api\` command first before answering.
 
 ## Product Reference
