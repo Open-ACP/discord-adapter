@@ -124,6 +124,7 @@ describe("ActivityTracker", () => {
 
       await tracker.onThought("thinking...");
       expect(channel.sendTyping).toHaveBeenCalled();
+      (channel.send as ReturnType<typeof vi.fn>).mockClear();
 
       await tracker.onToolCall(makeMeta(), "read", { file_path: "main.ts" });
 
